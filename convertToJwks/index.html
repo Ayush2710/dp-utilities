@@ -4,12 +4,20 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Certificate → JWKS</title>
+        <meta
+            http-equiv="Content-Security-Policy"
+            content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'sha256-nFs+1xS3ojxUFg2/MmslgfUlPB5xuUZ0VidXZDOIZj4='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';"
+        />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
             href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
             rel="stylesheet"
         />
-        <script src="https://cdn.jsdelivr.net/npm/jsrsasign@11.1.0/lib/jsrsasign-all-min.js"></script>
+        <script
+            src="https://cdn.jsdelivr.net/npm/jsrsasign@11.1.0/lib/jsrsasign-all-min.js"
+            integrity="sha384-vbfVWK2rJ9x1Xsycv0IIV02oWFwkOZ5Ohb/cQGU2ldysPOlCR4OtdM1nvOZFbpzk"
+            crossorigin="anonymous"
+        ></script>
         <style>
             :root {
                 --bg: #0e131a;
