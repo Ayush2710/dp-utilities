@@ -1,1 +1,942 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Certificate → JWKS</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+            rel="stylesheet"
+        />
+        <script src="https://cdn.jsdelivr.net/npm/jsrsasign@11.1.0/lib/jsrsasign-all-min.js"></script>
+        <style>
+            :root {
+                --bg: #0e131a;
+                --surface: #161d27;
+                --surface-2: #1d2631;
+                --border: #2a3542;
+                --border-soft: #232d38;
+                --text: #e7ecf2;
+                --text-dim: #8a97a8;
+                --text-dimmer: #5c6779;
+                --accent: #49d3c4;
+                --accent-soft: rgba(73, 211, 196, 0.12);
+                --accent-dim: #2c7d74;
+                --danger: #f0767a;
+                --danger-soft: rgba(240, 118, 122, 0.1);
+            }
+            * {
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+            }
+            body {
+                background: var(--bg);
+                color: var(--text);
+                font-family: "Inter", sans-serif;
+                min-height: 100vh;
+                -webkit-font-smoothing: antialiased;
+            }
+            ::selection {
+                background: var(--accent);
+                color: #0e131a;
+            }
 
+            .wrap {
+                max-width: 1240px;
+                margin: 0 auto;
+                padding: 40px 28px 80px;
+            }
+
+            header.top {
+                display: flex;
+                align-items: flex-end;
+                justify-content: space-between;
+                gap: 24px;
+                margin-bottom: 36px;
+                padding-bottom: 24px;
+                border-bottom: 1px solid var(--border-soft);
+                flex-wrap: wrap;
+            }
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            .brand .mark {
+                width: 34px;
+                height: 34px;
+                border-radius: 8px;
+                background: linear-gradient(155deg, var(--accent), var(--accent-dim));
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-family: "IBM Plex Mono", monospace;
+                font-weight: 600;
+                font-size: 15px;
+                color: #08211e;
+                flex-shrink: 0;
+            }
+            h1 {
+                font-family: "Space Grotesk", sans-serif;
+                font-weight: 600;
+                font-size: 26px;
+                letter-spacing: -0.01em;
+                margin: 0;
+            }
+            .sub {
+                color: var(--text-dim);
+                font-size: 14px;
+                margin-top: 4px;
+                max-width: 46ch;
+            }
+            .top-note {
+                font-family: "IBM Plex Mono", monospace;
+                font-size: 11.5px;
+                color: var(--text-dimmer);
+                text-align: right;
+                line-height: 1.6;
+            }
+
+            .grid {
+                display: grid;
+                grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr);
+                gap: 24px;
+            }
+            @media (max-width: 940px) {
+                .grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .panel {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 22px;
+            }
+            .panel + .panel {
+                margin-top: 20px;
+            }
+            .panel h2 {
+                font-family: "Space Grotesk", sans-serif;
+                font-size: 14px;
+                font-weight: 600;
+                letter-spacing: 0.03em;
+                text-transform: uppercase;
+                color: var(--text-dim);
+                margin: 0 0 16px;
+            }
+
+            textarea#certInput {
+                width: 100%;
+                min-height: 220px;
+                resize: vertical;
+                background: var(--surface-2);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                color: var(--text);
+                font-family: "IBM Plex Mono", monospace;
+                font-size: 12.5px;
+                line-height: 1.6;
+                padding: 14px;
+                outline: none;
+                transition: border-color 0.15s ease;
+            }
+            textarea#certInput:focus {
+                border-color: var(--accent-dim);
+            }
+            textarea#certInput::placeholder {
+                color: var(--text-dimmer);
+            }
+
+            .dropzone {
+                margin-top: 12px;
+                border: 1.5px dashed var(--border);
+                border-radius: 10px;
+                padding: 14px;
+                text-align: center;
+                color: var(--text-dim);
+                font-size: 12.5px;
+                cursor: pointer;
+                transition:
+                    border-color 0.15s ease,
+                    background 0.15s ease;
+            }
+            .dropzone:hover,
+            .dropzone.drag {
+                border-color: var(--accent-dim);
+                background: var(--accent-soft);
+            }
+            .dropzone input {
+                display: none;
+            }
+            .dropzone strong {
+                color: var(--text);
+            }
+
+            .opts {
+                margin-top: 20px;
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px 16px;
+            }
+            .opt-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 13px;
+                color: var(--text-dim);
+            }
+            .opt-row input[type="checkbox"] {
+                accent-color: var(--accent);
+                width: 15px;
+                height: 15px;
+                cursor: pointer;
+            }
+            .field {
+                grid-column: 1 / -1;
+            }
+            .field label {
+                display: block;
+                font-size: 12px;
+                color: var(--text-dimmer);
+                margin-bottom: 6px;
+            }
+            select {
+                width: 100%;
+                background: var(--surface-2);
+                border: 1px solid var(--border);
+                color: var(--text);
+                border-radius: 8px;
+                padding: 9px 10px;
+                font-size: 13px;
+                font-family: "Inter", sans-serif;
+                outline: none;
+            }
+
+            .go-btn {
+                margin-top: 20px;
+                width: 100%;
+                background: var(--accent);
+                color: #0a201d;
+                border: none;
+                border-radius: 10px;
+                padding: 13px 16px;
+                font-family: "Space Grotesk", sans-serif;
+                font-weight: 600;
+                font-size: 14.5px;
+                letter-spacing: 0.01em;
+                cursor: pointer;
+                transition:
+                    filter 0.15s ease,
+                    transform 0.1s ease;
+            }
+            .go-btn:hover {
+                filter: brightness(1.08);
+            }
+            .go-btn:active {
+                transform: scale(0.99);
+            }
+
+            .error-box {
+                margin-top: 14px;
+                background: var(--danger-soft);
+                border: 1px solid rgba(240, 118, 122, 0.35);
+                color: #ffb3b6;
+                border-radius: 10px;
+                padding: 12px 14px;
+                font-size: 12.5px;
+                font-family: "IBM Plex Mono", monospace;
+                display: none;
+                line-height: 1.5;
+            }
+
+            /* output */
+            #output-empty {
+                color: var(--text-dimmer);
+                font-size: 13.5px;
+                padding: 40px 10px;
+                text-align: center;
+                line-height: 1.6;
+            }
+            #output-empty .glyph {
+                font-size: 28px;
+                margin-bottom: 10px;
+                opacity: 0.5;
+            }
+
+            .out-actions {
+                display: flex;
+                gap: 8px;
+                margin-bottom: 16px;
+            }
+            .mini-btn {
+                background: var(--surface-2);
+                border: 1px solid var(--border);
+                color: var(--text);
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 12.5px;
+                font-family: "Inter", sans-serif;
+                font-weight: 500;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                transition:
+                    border-color 0.15s ease,
+                    background 0.15s ease;
+            }
+            .mini-btn:hover {
+                border-color: var(--accent-dim);
+                background: var(--accent-soft);
+            }
+
+            .key-card {
+                background: var(--surface-2);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 16px;
+                margin-bottom: 14px;
+            }
+            .key-card-top {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 14px;
+                margin-bottom: 12px;
+            }
+            .key-meta .cn {
+                font-family: "Space Grotesk", sans-serif;
+                font-weight: 600;
+                font-size: 15px;
+            }
+            .key-meta .line {
+                font-family: "IBM Plex Mono", monospace;
+                font-size: 11.5px;
+                color: var(--text-dim);
+                margin-top: 3px;
+                word-break: break-all;
+            }
+            .badge {
+                display: inline-block;
+                font-family: "IBM Plex Mono", monospace;
+                font-size: 10.5px;
+                padding: 3px 8px;
+                border-radius: 100px;
+                background: var(--accent-soft);
+                color: var(--accent);
+                border: 1px solid rgba(73, 211, 196, 0.3);
+                white-space: nowrap;
+            }
+            .fingerprint {
+                display: grid;
+                grid-template-columns: repeat(8, 8px);
+                grid-template-rows: repeat(8, 8px);
+                gap: 1.5px;
+                flex-shrink: 0;
+                border-radius: 4px;
+                overflow: hidden;
+            }
+            .fingerprint div {
+                width: 8px;
+                height: 8px;
+            }
+
+            pre.jwk-json {
+                background: var(--bg);
+                border: 1px solid var(--border-soft);
+                border-radius: 8px;
+                padding: 12px;
+                font-family: "IBM Plex Mono", monospace;
+                font-size: 11.5px;
+                line-height: 1.6;
+                overflow-x: auto;
+                margin: 0;
+                color: var(--text-dim);
+            }
+            pre.jwk-json .k {
+                color: var(--accent);
+            }
+            pre.jwk-json .s {
+                color: #d9c37a;
+            }
+
+            pre#jwksFull {
+                background: var(--bg);
+                border: 1px solid var(--border-soft);
+                border-radius: 10px;
+                padding: 16px;
+                font-family: "IBM Plex Mono", monospace;
+                font-size: 12px;
+                line-height: 1.65;
+                overflow-x: auto;
+                max-height: 420px;
+                color: var(--text);
+            }
+
+            .toast {
+                position: fixed;
+                bottom: 24px;
+                left: 50%;
+                transform: translateX(-50%) translateY(20px);
+                background: var(--surface-2);
+                border: 1px solid var(--accent-dim);
+                color: var(--text);
+                padding: 10px 18px;
+                border-radius: 100px;
+                font-size: 13px;
+                opacity: 0;
+                pointer-events: none;
+                transition:
+                    opacity 0.2s ease,
+                    transform 0.2s ease;
+                font-family: "Inter", sans-serif;
+            }
+            .toast.show {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+
+            footer {
+                margin-top: 30px;
+                color: var(--text-dimmer);
+                font-size: 11.5px;
+                text-align: center;
+                font-family: "IBM Plex Mono", monospace;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="wrap">
+            <header class="top">
+                <div>
+                    <div class="brand">
+                        <div class="mark">{ }</div>
+                        <h1>Certificate → JWKS</h1>
+                    </div>
+                    <div class="sub">
+                        Paste or drop an X.509 certificate (or chain). Get back a JWKS, per-key metadata, and a
+                        verifiable RFC 7638 thumbprint — all computed client-side.
+                    </div>
+                </div>
+                <div class="top-note">nothing leaves your browser<br />RSA · EC (P-256/384/521)</div>
+            </header>
+
+            <div class="grid">
+                <!-- LEFT: INPUT -->
+                <div>
+                    <div class="panel">
+                        <h2>Input</h2>
+                        <textarea
+                            id="certInput"
+                            spellcheck="false"
+                            placeholder="-----BEGIN CERTIFICATE-----&#10;MIIC...&#10;-----END CERTIFICATE-----&#10;&#10;Paste a certificate, certificate chain, public key, or RSA public key — multiple BEGIN/END blocks are all parsed into one JWKS."
+                        ></textarea>
+
+                        <div class="dropzone" id="dropzone">
+                            <strong>Drop a .pem / .crt / .cer / .der file</strong> or click to browse
+                            <input type="file" id="fileInput" accept=".pem,.crt,.cer,.der,.key,.pub,.txt" />
+                        </div>
+
+                        <div class="opts">
+                            <div class="opt-row">
+                                <input type="checkbox" id="optUse" checked /><label for="optUse"
+                                    >Include "use": "sig"</label
+                                >
+                            </div>
+                            <div class="opt-row">
+                                <input type="checkbox" id="optAlg" checked /><label for="optAlg"
+                                    >Include "alg" (best-guess)</label
+                                >
+                            </div>
+                            <div class="opt-row">
+                                <input type="checkbox" id="optX5c" checked /><label for="optX5c"
+                                    >Include x5c (full cert, base64 DER)</label
+                                >
+                            </div>
+                            <div class="opt-row">
+                                <input type="checkbox" id="optX5t" /><label for="optX5t"
+                                    >Include x5t (SHA-1 cert thumbprint)</label
+                                >
+                            </div>
+                            <div class="opt-row">
+                                <input type="checkbox" id="optX5t256" checked /><label for="optX5t256"
+                                    >Include x5t#S256 (SHA-256 cert thumbprint)</label
+                                >
+                            </div>
+                            <div class="field">
+                                <label for="kidStrategy">kid source</label>
+                                <select id="kidStrategy">
+                                    <option value="jwk" selected>RFC 7638 JWK thumbprint (SHA-256)</option>
+                                    <option value="x5t256">Certificate thumbprint, x5t#S256</option>
+                                    <option value="x5t">Certificate thumbprint, x5t (SHA-1)</option>
+                                    <option value="serial">Certificate serial number</option>
+                                    <option value="none">No kid</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button class="go-btn" id="goBtn">Generate JWKS</button>
+                        <div class="error-box" id="errorBox"></div>
+                    </div>
+                </div>
+
+                <!-- RIGHT: OUTPUT -->
+                <div class="panel" id="outputPanel">
+                    <h2>Output</h2>
+                    <div id="output-empty">
+                        <div class="glyph">⌁</div>
+                        Paste a certificate and click Generate.<br />Each key's fingerprint is rendered as a small grid
+                        — every cell color comes directly from its SHA-256 hash bytes.
+                    </div>
+                    <div id="output-content" style="display: none">
+                        <div class="out-actions">
+                            <button class="mini-btn" id="copyBtn">Copy JWKS</button>
+                            <button class="mini-btn" id="downloadBtn">Download jwks.json</button>
+                        </div>
+                        <div id="keyCards"></div>
+                        <pre id="jwksFull"></pre>
+                    </div>
+                </div>
+            </div>
+
+            <footer>
+                parsing via jsrsasign · hashing via the browser's SubtleCrypto · no network calls with your certificate
+                data
+            </footer>
+        </div>
+
+        <div class="toast" id="toast"></div>
+
+        <script>
+            (function () {
+                const certInput = document.getElementById("certInput");
+                const dropzone = document.getElementById("dropzone");
+                const fileInput = document.getElementById("fileInput");
+                const goBtn = document.getElementById("goBtn");
+                const errorBox = document.getElementById("errorBox");
+                const outputEmpty = document.getElementById("output-empty");
+                const outputContent = document.getElementById("output-content");
+                const keyCards = document.getElementById("keyCards");
+                const jwksFull = document.getElementById("jwksFull");
+                const toast = document.getElementById("toast");
+
+                // ---------- file handling ----------
+                dropzone.addEventListener("click", () => fileInput.click());
+                ["dragover", "dragenter"].forEach((evt) =>
+                    dropzone.addEventListener(evt, (e) => {
+                        e.preventDefault();
+                        dropzone.classList.add("drag");
+                    })
+                );
+                ["dragleave", "drop"].forEach((evt) =>
+                    dropzone.addEventListener(evt, (e) => {
+                        e.preventDefault();
+                        dropzone.classList.remove("drag");
+                    })
+                );
+                dropzone.addEventListener("drop", (e) => {
+                    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+                });
+                fileInput.addEventListener("change", (e) => {
+                    if (e.target.files.length) handleFile(e.target.files[0]);
+                });
+
+                function handleFile(file) {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const bytes = new Uint8Array(reader.result);
+                        const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+                        if (
+                            text.includes("BEGIN CERTIFICATE") ||
+                            text.includes("BEGIN PUBLIC KEY") ||
+                            text.includes("BEGIN RSA PUBLIC KEY")
+                        ) {
+                            certInput.value = text;
+                        } else {
+                            certInput.value = derBytesToPem(bytes);
+                        }
+                    };
+                    reader.readAsArrayBuffer(file);
+                }
+
+                function derBytesToPem(bytes) {
+                    const b64 = bytesToStdBase64(bytes);
+                    const lines = b64.match(/.{1,64}/g) || [];
+                    return "-----BEGIN CERTIFICATE-----\n" + lines.join("\n") + "\n-----END CERTIFICATE-----\n";
+                }
+
+                // ---------- byte / base64 helpers ----------
+                function bytesToStdBase64(bytes) {
+                    let bin = "";
+                    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+                    return btoa(bin);
+                }
+                function bytesToBase64Url(bytes) {
+                    return bytesToStdBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+                }
+                function hexToBytes(hex) {
+                    const out = new Uint8Array(hex.length / 2);
+                    for (let i = 0; i < hex.length; i += 2) out[i / 2] = parseInt(hex.substr(i, 2), 16);
+                    return out;
+                }
+                async function sha(alg, bytes) {
+                    const buf = await crypto.subtle.digest(alg, bytes);
+                    return new Uint8Array(buf);
+                }
+
+                function canonicalJwkString(jwk) {
+                    let ordered;
+                    if (jwk.kty === "RSA") ordered = { e: jwk.e, kty: jwk.kty, n: jwk.n };
+                    else if (jwk.kty === "EC") ordered = { crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y };
+                    else if (jwk.kty === "OKP") ordered = { crv: jwk.crv, kty: jwk.kty, x: jwk.x };
+                    else ordered = jwk;
+                    return JSON.stringify(ordered);
+                }
+
+                // ---------- cert parsing ----------
+                function splitPemBlocks(input) {
+                    const certs = input.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) || [];
+
+                    const publicKeys = input.match(/-----BEGIN PUBLIC KEY-----[\s\S]+?-----END PUBLIC KEY-----/g) || [];
+
+                    const rsaPublicKeys =
+                        input.match(/-----BEGIN RSA PUBLIC KEY-----[\s\S]+?-----END RSA PUBLIC KEY-----/g) || [];
+
+                    return [...certs, ...publicKeys, ...rsaPublicKeys];
+                }
+
+                function algForJwk(jwk, bitLen) {
+                    if (jwk.kty === "RSA") return "RS256";
+                    if (jwk.kty === "EC") {
+                        if (jwk.crv === "P-256") return "ES256";
+                        if (jwk.crv === "P-384") return "ES384";
+                        if (jwk.crv === "P-521") return "ES512";
+                    }
+                    return null;
+                }
+
+                function readableSubject(x509) {
+                    try {
+                        return x509.getSubjectString();
+                    } catch (e) {
+                        return "(subject unavailable)";
+                    }
+                }
+                function readableIssuer(x509) {
+                    try {
+                        return x509.getIssuerString();
+                    } catch (e) {
+                        return "(issuer unavailable)";
+                    }
+                }
+                function cnFromSubject(subj) {
+                    const m = subj && subj.match(/CN=([^\/,]+)/);
+                    return m ? m[1] : subj || "Unnamed key";
+                }
+
+                async function parseOneCert(pem) {
+                    const x509 = new X509();
+                    x509.readCertPEM(pem);
+                    const pubKey = x509.getPublicKey();
+                    const jwk = KEYUTIL.getJWKFromKey(pubKey);
+
+                    const derHex = x509.hex;
+                    const derBytes = hexToBytes(derHex);
+
+                    let bitLen = null;
+                    if (jwk.kty === "RSA" && pubKey.n && pubKey.n.bitLength) bitLen = pubKey.n.bitLength();
+                    if (jwk.kty === "EC") bitLen = { "P-256": 256, "P-384": 384, "P-521": 521 }[jwk.crv] || null;
+
+                    const thumb256 = await sha("SHA-256", new TextEncoder().encode(canonicalJwkString(jwk)));
+                    const x5t256Bytes = await sha("SHA-256", derBytes);
+                    const x5t1Bytes = await sha("SHA-1", derBytes);
+
+                    return {
+                        jwk,
+                        x509,
+                        derBytes,
+                        subject: readableSubject(x509),
+                        issuer: readableIssuer(x509),
+                        cn: cnFromSubject(readableSubject(x509)),
+                        serial: (function () {
+                            try {
+                                return x509.getSerialNumberHex();
+                            } catch (e) {
+                                return null;
+                            }
+                        })(),
+                        notBefore: (function () {
+                            try {
+                                return x509.getNotBefore();
+                            } catch (e) {
+                                return null;
+                            }
+                        })(),
+                        notAfter: (function () {
+                            try {
+                                return x509.getNotAfter();
+                            } catch (e) {
+                                return null;
+                            }
+                        })(),
+                        sigAlg: (function () {
+                            try {
+                                return x509.getSignatureAlgorithmField();
+                            } catch (e) {
+                                return null;
+                            }
+                        })(),
+                        bitLen,
+                        jwkThumbprint: bytesToBase64Url(thumb256),
+                        x5t256: bytesToBase64Url(x5t256Bytes),
+                        x5t1: bytesToBase64Url(x5t1Bytes),
+                        x5t256HashBytes: x5t256Bytes,
+                        alg: algForJwk(jwk),
+                    };
+                }
+
+                // ---------- fingerprint grid ----------
+                function renderFingerprint(hashBytes) {
+                    const el = document.createElement("div");
+                    el.className = "fingerprint";
+                    const baseHue = 172; // matches accent teal
+                    for (let i = 0; i < 64; i++) {
+                        const b = hashBytes[i % hashBytes.length];
+                        const hue = (baseHue + ((b - 128) / 128) * 46 + 360) % 360;
+                        const light = 22 + (b % 42);
+                        const cell = document.createElement("div");
+                        cell.style.background = `hsl(${hue.toFixed(0)}, 55%, ${light}%)`;
+                        el.appendChild(cell);
+                    }
+                    return el;
+                }
+
+                // ---------- syntax-ish highlight for small json blocks ----------
+                function highlightJson(obj) {
+                    const json = JSON.stringify(obj, null, 2);
+                    return json
+                        .replace(/"([^"]+)":/g, '<span class="k">"$1"</span>:')
+                        .replace(/: "([^"]*)"/g, ': <span class="s">"$1"</span>');
+                }
+
+                function detectPemType(pem) {
+                    if (pem.includes("-----BEGIN CERTIFICATE-----")) {
+                        return "certificate";
+                    }
+
+                    if (pem.includes("-----BEGIN PUBLIC KEY-----")) {
+                        return "publickey";
+                    }
+
+                    return "unknown";
+                }
+
+                function unwrapFakeCertificate(pem) {
+                    try {
+                        const body = pem
+                            .replace(/-----BEGIN CERTIFICATE-----/g, "")
+                            .replace(/-----END CERTIFICATE-----/g, "")
+                            .replace(/\s+/g, "");
+
+                        const decoded = atob(body);
+
+                        if (decoded.includes("BEGIN PUBLIC KEY") || decoded.includes("BEGIN RSA PUBLIC KEY")) {
+                            return decoded;
+                        }
+                    } catch (e) {}
+
+                    return pem;
+                }
+
+                async function parsePublicKey(pem) {
+                    const key = KEYUTIL.getKey(pem);
+                    const jwk = KEYUTIL.getJWKFromKey(key);
+
+                    const thumb256 = await sha("SHA-256", new TextEncoder().encode(canonicalJwkString(jwk)));
+
+                    let bitLen = null;
+
+                    if (jwk.kty === "RSA" && key.n && key.n.bitLength) {
+                        bitLen = key.n.bitLength();
+                    }
+
+                    return {
+                        jwk,
+                        type: "Public Key",
+                        cn: "Public Key",
+                        subject: null,
+                        issuer: null,
+                        serial: null,
+                        notBefore: null,
+                        notAfter: null,
+                        sigAlg: null,
+                        bitLen,
+                        derBytes: null,
+                        x5t1: null,
+                        x5t256: null,
+                        jwkThumbprint: bytesToBase64Url(thumb256),
+                        x5t256HashBytes: new Uint8Array(32),
+                        alg: algForJwk(jwk),
+                    };
+                }
+
+                function fmtDate(raw) {
+                    if (!raw) return "—";
+                    // jsrsasign returns YYMMDDHHMMSSZ or YYYYMMDDHHMMSSZ
+                    const m = raw.match(/^(\d{2}|\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z?$/);
+                    if (!m) return raw;
+                    let [, y, mo, d, h, mi, s] = m;
+                    if (y.length === 2) y = (parseInt(y, 10) < 50 ? "20" : "19") + y;
+                    return `${y}-${mo}-${d} ${h}:${mi} UTC`;
+                }
+
+                // ---------- main action ----------
+                goBtn.addEventListener("click", async () => {
+                    errorBox.style.display = "none";
+                    const raw = certInput.value.trim();
+                    if (!raw) {
+                        showError("Paste a PEM certificate, or drop a file, first.");
+                        return;
+                    }
+                    const blocks = splitPemBlocks(raw);
+                    if (blocks.length === 0) {
+                        showError(
+                            "No supported PEM block found. Supported formats: CERTIFICATE, PUBLIC KEY, RSA PUBLIC KEY."
+                        );
+                        return;
+                    }
+
+                    const useFlag = document.getElementById("optUse").checked;
+                    const algFlag = document.getElementById("optAlg").checked;
+                    const x5cFlag = document.getElementById("optX5c").checked;
+                    const x5tFlag = document.getElementById("optX5t").checked;
+                    const x5t256Flag = document.getElementById("optX5t256").checked;
+                    const kidStrategy = document.getElementById("kidStrategy").value;
+
+                    let parsed;
+                    try {
+                        parsed = await Promise.all(
+                            blocks.map(async (pem) => {
+                                pem = unwrapFakeCertificate(pem);
+
+                                const type = detectPemType(pem);
+
+                                if (type === "certificate") {
+                                    return await parseOneCert(pem);
+                                }
+
+                                if (type === "publickey") {
+                                    return await parsePublicKey(pem);
+                                }
+
+                                throw new Error("Unsupported PEM format");
+                            })
+                        );
+                    } catch (e) {
+                        showError(
+                            "Unsupported or malformed PEM. Supported formats: X.509 Certificate, Public Key, RSA Public Key."
+                        );
+                        return;
+                    }
+
+                    const jwksKeys = [];
+                    keyCards.innerHTML = "";
+
+                    parsed.forEach((p) => {
+                        const key = Object.assign({}, p.jwk);
+                        if (useFlag) key.use = "sig";
+                        if (algFlag && p.alg) key.alg = p.alg;
+                        if (x5cFlag && p.derBytes) key.x5c = [bytesToStdBase64(p.derBytes)];
+                        if (x5tFlag && p.x5t1) key.x5t = p.x5t1;
+                        if (x5t256Flag && p.x5t256) key["x5t#S256"] = p.x5t256;
+
+                        let kid = null;
+                        if (kidStrategy === "jwk") kid = p.jwkThumbprint;
+                        else if (kidStrategy === "x5t256") kid = p.x5t256;
+                        else if (kidStrategy === "x5t") kid = p.x5t1;
+                        else if (kidStrategy === "serial") kid = p.serial;
+                        if (kid) key.kid = kid;
+
+                        jwksKeys.push(key);
+
+                        const card = document.createElement("div");
+                        card.className = "key-card";
+                        card.innerHTML = `
+        <div class="key-card-top">
+          <div class="key-meta">
+            <div class="cn">${escapeHtml(p.cn)}</div>
+            <div class="line">issuer: ${escapeHtml(p.issuer || "—")}</div>
+            <div class="line">valid: ${fmtDate(p.notBefore)} → ${fmtDate(p.notAfter)}</div>
+            <div class="line">serial: ${p.serial || "—"} · sig alg: ${p.sigAlg || "—"}</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:flex-start; gap:14px; margin-bottom:10px;">
+          <span class="badge">${p.jwk.kty}${p.bitLen ? " · " + p.bitLen + (p.jwk.kty === "EC" ? "" : "-bit") : ""}${p.jwk.crv ? " · " + p.jwk.crv : ""}</span>
+        </div>
+      `;
+                        const fpRow = document.createElement("div");
+                        fpRow.style.display = "flex";
+                        fpRow.style.gap = "14px";
+                        fpRow.style.alignItems = "flex-start";
+                        fpRow.style.marginBottom = "10px";
+                        fpRow.appendChild(renderFingerprint(p.x5t256HashBytes));
+                        const pre = document.createElement("pre");
+                        pre.className = "jwk-json";
+                        pre.style.flex = "1";
+                        pre.innerHTML = highlightJson(key);
+                        fpRow.appendChild(pre);
+                        card.appendChild(fpRow);
+                        keyCards.appendChild(card);
+                    });
+
+                    const jwks = { keys: jwksKeys };
+                    jwksFull.textContent = JSON.stringify(jwks, null, 2);
+
+                    outputEmpty.style.display = "none";
+                    outputContent.style.display = "block";
+                });
+
+                function escapeHtml(s) {
+                    return String(s).replace(
+                        /[&<>"']/g,
+                        (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+                    );
+                }
+
+                function showError(msg) {
+                    errorBox.textContent = msg;
+                    errorBox.style.display = "block";
+                }
+
+                // ---------- copy / download ----------
+                document.getElementById("copyBtn").addEventListener("click", () => {
+                    navigator.clipboard
+                        .writeText(jwksFull.textContent)
+                        .then(() => showToast("JWKS copied to clipboard"));
+                });
+                document.getElementById("downloadBtn").addEventListener("click", () => {
+                    const blob = new Blob([jwksFull.textContent], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "jwks.json";
+                    a.click();
+                    URL.revokeObjectURL(url);
+                });
+
+                function showToast(msg) {
+                    toast.textContent = msg;
+                    toast.classList.add("show");
+                    setTimeout(() => toast.classList.remove("show"), 1800);
+                }
+            })();
+        </script>
+    </body>
+</html>
