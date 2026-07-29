@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>DP Utilities — Free Client-Side Tools for API Gateway &amp; Open Banking Crypto Objects</title>
+        <meta
+            name="description"
+            content="Free, client-side browser tools for DataPower, API gateway, and Open Banking crypto object work — certificate to JWKS conversion, JWKS to PEM conversion, and more. Nothing is uploaded; everything runs in your browser."
+        />
+        <link rel="canonical" href="https://ayush2710.github.io/dp-utilities/" />
+        <meta property="og:title" content="DP Utilities — Certificate &amp; JWKS Tools" />
+        <meta
+            property="og:description"
+            content="Free client-side tools for certificate, JWKS, and PEM conversion. No data leaves your browser."
+        />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://ayush2710.github.io/dp-utilities/" />
+        <meta
+            http-equiv="Content-Security-Policy"
+            content="default-src 'self'; script-src 'self' 'sha256-FVNY9c3LBXvi2LSl70WkETea/tIFylFRwqnvSAdgDP4='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';"
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+            rel="stylesheet"
+        />
+        <script type="application/ld+json">
+            {
+                "@context": "https://schema.org",
+                "@type": "SoftwareApplication",
+                "name": "JWKS Conversion Utility",
+                "url": "https://ayush2710.github.io/dp-utilities/jwks-conversion-utility/",
+                "applicationCategory": "DeveloperApplication",
+                "operatingSystem": "Any (browser-based)",
+                "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+            }
+        </script>
+        <style>
+            :root {
+                --bg: #0e131a;
+                --surface: #161d27;
+                --surface-2: #1d2631;
+                --border: #2a3542;
+                --border-soft: #232d38;
+                --text: #e7ecf2;
+                --text-dim: #8a97a8;
+                --text-dimmer: #5c6779;
+                --accent: #49d3c4;
+                --accent-soft: rgba(73, 211, 196, 0.12);
+                --accent-dim: #2c7d74;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+            }
+            body {
+                background: var(--bg);
+                color: var(--text);
+                font-family: "Inter", sans-serif;
+                min-height: 100vh;
+                -webkit-font-smoothing: antialiased;
+            }
+            .wrap {
+                max-width: 900px;
+                margin: 0 auto;
+                padding: 60px 28px 80px;
+            }
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 14px;
+            }
+            .brand .mark {
+                width: 34px;
+                height: 34px;
+                border-radius: 8px;
+                background: linear-gradient(155deg, var(--accent), var(--accent-dim));
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-family: "IBM Plex Mono", monospace;
+                font-weight: 600;
+                font-size: 15px;
+                color: #08211e;
+                flex-shrink: 0;
+            }
+            h1 {
+                font-family: "Space Grotesk", sans-serif;
+                font-weight: 600;
+                font-size: 28px;
+                letter-spacing: -0.01em;
+                margin: 0;
+            }
+            p.lead {
+                color: var(--text-dim);
+                font-size: 15px;
+                line-height: 1.6;
+                max-width: 62ch;
+                margin: 18px 0 40px;
+            }
+            .tools {
+                display: grid;
+                gap: 16px;
+            }
+            a.tool-card {
+                display: block;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 22px 24px;
+                text-decoration: none;
+                color: var(--text);
+                transition:
+                    border-color 0.15s ease,
+                    background 0.15s ease;
+            }
+            a.tool-card:hover {
+                border-color: var(--accent-dim);
+                background: var(--surface-2);
+            }
+            a.tool-card h2 {
+                font-family: "Space Grotesk", sans-serif;
+                font-size: 18px;
+                font-weight: 600;
+                margin: 0 0 6px;
+                color: var(--accent);
+            }
+            a.tool-card p {
+                font-size: 13.5px;
+                color: var(--text-dim);
+                line-height: 1.5;
+                margin: 0;
+            }
+            .tag {
+                display: inline-block;
+                font-family: "IBM Plex Mono", monospace;
+                font-size: 10.5px;
+                padding: 3px 8px;
+                border-radius: 100px;
+                background: var(--accent-soft);
+                color: var(--accent);
+                border: 1px solid rgba(73, 211, 196, 0.3);
+                margin-top: 10px;
+            }
+            footer {
+                margin-top: 50px;
+                color: var(--text-dimmer);
+                font-size: 11.5px;
+                text-align: center;
+                font-family: "IBM Plex Mono", monospace;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="wrap">
+            <div class="brand">
+                <div class="mark">{ }</div>
+                <h1>DP Utilities</h1>
+            </div>
+            <p class="lead">
+                Free, client-side browser tools for API gateway, DataPower, and Open Banking crypto object work.
+                Certificate and key conversion, format inspection, and validation — all computed locally in your
+                browser. Nothing is ever uploaded or sent to a server.
+            </p>
+
+            <div class="tools">
+                <a class="tool-card" href="./jwks-conversion-utility/">
+                    <h2>JWKS Conversion Utility</h2>
+                    <p>
+                        Certificate → JWKS and JWKS → PEM, both in one page. Paste or drop an X.509 certificate to
+                        get a JWKS with RFC 7638 thumbprints, or paste a JWKS to get back PEM-encoded certificates
+                        and public keys.
+                    </p>
+                    <span class="tag">RSA · EC</span>
+                </a>
+            </div>
+
+            <footer>more tools coming soon · everything on this site runs entirely client-side</footer>
+        </div>
+    </body>
+</html>
