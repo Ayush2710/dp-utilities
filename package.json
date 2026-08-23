@@ -1,0 +1,9 @@
+{
+  "name": "dp-utilities",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Client-side IBM DataPower utility tests.",
+  "scripts": {
+    "test": "node tests/dp-latency-trace.regression.test.js"
+  }
+}

@@ -1,0 +1,1177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Client-side IBM DataPower Latency and ExtLatency log analyzer.">
+<meta name="referrer" content="no-referrer">
+<title>DP Latency Trace</title>
+<style>
+  :root{
+    --bg: #0B1220;
+    --panel: #111A2C;
+    --panel-2: #0E1626;
+    --border: #22314A;
+    --text: #E7ECF3;
+    --text-dim: #8996AC;
+    --text-faint: #566079;
+    --grid: #1B2740;
+
+    --c-rhr: #5EC8D8;
+    --c-reqproc: #7C93F5;
+    --c-backxmit: #F2A65A;
+    --c-rsphdr: #E85D75;
+    --c-rspproc: #8FD694;
+    --c-txresp: #C792EA;
+
+    --amber: #F2A65A;
+    --amber-glow: rgba(242,166,90,0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+  .skip-link {
+    position: absolute;
+    left: 12px;
+    top: -40px;
+    background: var(--c-rhr);
+    color: #0B1220;
+    padding: 8px 10px;
+    border-radius: 4px;
+    z-index: 20;
+    font-weight: 700;
+  }
+  .skip-link:focus { top: 12px; }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    background: linear-gradient(180deg, var(--panel-2), var(--bg));
+  }
+
+  header .mark {
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    color: var(--text);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0;
+  }
+
+  header .mark .bar { display: inline-block; width: 4px; height: 14px; background: var(--c-backxmit); border-radius: 1px; }
+  header .sub { font-size: 12.5px; color: var(--text-faint); font-family: 'IBM Plex Mono', monospace; }
+
+  main { flex: 1; display: grid; grid-template-columns: 340px 1fr; gap: 0; min-height: 0; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+
+  .panel-input { border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+
+  label.field-label {
+    display: block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 130px;
+    resize: vertical;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    padding: 10px 12px;
+    line-height: 1.5;
+  }
+
+  textarea:focus, button:focus-visible, .toggle button:focus-visible { outline: 2px solid var(--c-rhr); outline-offset: 1px; }
+
+  .toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .toggle.full { width: 100%; }
+  .toggle.full button { flex: 1; }
+
+  .toggle button {
+    background: var(--panel);
+    color: var(--text-dim);
+    border: none;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    padding: 7px 12px;
+    cursor: pointer;
+  }
+
+  .toggle button.active { background: var(--c-reqproc); color: #0B1220; font-weight: 600; }
+
+  .btn-row { display: flex; gap: 8px; }
+
+  button.action {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13.5px;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 9px 14px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  button.action.primary { background: var(--c-reqproc); color: #0B1220; border-color: var(--c-reqproc); }
+  button.action:hover { border-color: var(--text-dim); }
+  button.action.primary:hover { filter: brightness(1.08); }
+  button.action.small { padding: 6px 10px; font-size: 12px; }
+
+  .error {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--c-rsphdr);
+    border: 1px solid rgba(232,93,117,0.35);
+    background: rgba(232,93,117,0.08);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: none;
+  }
+  .status {
+    font-family: 'IBM Plex Mono', Consolas, 'Liberation Mono', monospace;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    border: 1px solid rgba(94,200,216,0.28);
+    background: rgba(94,200,216,0.06);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: none;
+  }
+
+  .hint { font-size: 12px; color: var(--text-faint); line-height: 1.5; }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .dropzone {
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    padding: 22px 14px;
+    text-align: center;
+    cursor: pointer;
+    background: var(--panel);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .dropzone.dragover { border-color: var(--c-rhr); background: rgba(94,200,216,0.06); }
+  .dropzone-text { font-size: 13px; color: var(--text-dim); }
+  .dropzone-text .link { color: var(--c-rhr); text-decoration: underline; }
+  .dropzone-file { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text); margin-top: 8px; }
+
+  .panel-main { padding: 20px 24px 40px; overflow-x: auto; }
+
+  .empty-state { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; color: var(--text-faint); padding-top: 40px; }
+  .empty-state .big { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--text-dim); }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.04em;
+    padding: 4px 10px; border-radius: 100px; border: 1px solid var(--border); color: var(--text-dim);
+    margin-bottom: 16px;
+  }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; }
+
+  .result-tabs { display: flex; gap: 6px; margin-bottom: 20px; }
+  .result-tabs button {
+    font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; padding: 8px 14px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text-dim); cursor: pointer;
+  }
+  .result-tabs button.active { background: var(--c-reqproc); color: #0B1220; font-weight: 600; border-color: var(--c-reqproc); }
+
+  .stat-row { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 22px; }
+  .stat { display: flex; flex-direction: column; gap: 3px; }
+  .stat .label { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
+  .stat .value { font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 600; }
+  .stat .value.amber { color: var(--amber); }
+  .stat .value.small { font-size: 15px; }
+  .stat .sub { font-size: 11.5px; color: var(--text-dim); font-family: 'IBM Plex Mono', monospace; }
+
+  .trace-wrap { border: 1px solid var(--border); background: var(--panel-2); border-radius: 8px; padding: 20px 20px 12px; margin-bottom: 26px; min-width: 640px; }
+  .trace-wrap.compact { padding: 14px 16px 8px; margin-bottom: 0; }
+  .trace-title { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 14px; }
+
+  .trace-track {
+    position: relative;
+    height: 56px;
+    background-image: linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: calc(100% / 10) 100%;
+    border-top: 1px solid var(--grid);
+    border-bottom: 1px solid var(--grid);
+  }
+  .trace-track.compact { height: 36px; }
+  .trace-track.dense { height: 44px; }
+
+  .segment { position: absolute; top: 12px; bottom: 12px; border-radius: 3px; cursor: default; transition: filter 0.12s ease, transform 0.12s ease; }
+  .trace-track.compact .segment { top: 7px; bottom: 7px; }
+  .trace-track.dense .segment { top: 6px; bottom: 6px; border-right: 1px solid rgba(11,18,32,0.5); }
+  .segment:hover { filter: brightness(1.2); transform: scaleY(1.08); z-index: 5; }
+  .segment.bottleneck { box-shadow: 0 0 0 2px var(--amber), 0 0 14px var(--amber-glow); }
+  .bottleneck-callout { position: absolute; top: -22px; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--amber); white-space: nowrap; }
+
+  .ruler { display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--text-faint); padding: 6px 0 2px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--grid); }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-dim); }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+  table.stage-table, table.txn-table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 13px; }
+  table.stage-table th, table.txn-table th { text-align: left; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  table.stage-table td, table.txn-table td { padding: 9px 10px; border-bottom: 1px solid var(--grid); color: var(--text); }
+  table.stage-table td.num, table.stage-table th.num, table.txn-table td.num, table.txn-table th.num { font-family: 'IBM Plex Mono', monospace; text-align: right; }
+  table.stage-table tr.group-start td { border-top: 1px solid var(--border); }
+  .group-chip { display: inline-flex; align-items: center; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-dim); }
+  tr.is-bottleneck td { background: rgba(242,166,90,0.06); }
+  tr.is-bottleneck td:first-child { border-left: 2px solid var(--amber); }
+  .validation-panel {
+    border: 1px solid rgba(143,214,148,0.28);
+    background: rgba(143,214,148,0.06);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 20px;
+  }
+  .validation-panel.warn {
+    border-color: rgba(242,166,90,0.35);
+    background: rgba(242,166,90,0.08);
+  }
+  .validation-panel .validation-title {
+    font-family: 'IBM Plex Mono', Consolas, 'Liberation Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 8px;
+  }
+  .validation-grid { display: flex; flex-wrap: wrap; gap: 18px; }
+
+  .section-title { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); margin: 30px 0 12px; }
+
+  .histogram { display: flex; align-items: flex-end; gap: 4px; height: 120px; border-bottom: 1px solid var(--grid); padding-bottom: 2px; min-width: 640px; }
+  .hist-bar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+  .hist-bar .bar { width: 100%; background: var(--c-reqproc); border-radius: 2px 2px 0 0; min-height: 2px; }
+  .hist-labels { display: flex; gap: 4px; min-width: 640px; margin-top: 6px; }
+  .hist-labels span { flex: 1; text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: var(--text-faint); }
+
+  .timeline { display: flex; align-items: flex-end; gap: 2px; height: 80px; min-width: 640px; overflow-x: auto; border-bottom: 1px solid var(--grid); padding-bottom: 2px; }
+  .timeline-bar { flex: 0 0 auto; width: 4px; min-height: 2px; border-radius: 1px 1px 0 0; cursor: default; }
+  .timeline-bar:hover { filter: brightness(1.3); }
+  .timeline-caption { font-size: 11.5px; color: var(--text-faint); margin-top: 6px; font-family: 'IBM Plex Mono', monospace; }
+
+  .contrib-list { display: flex; flex-direction: column; gap: 8px; min-width: 640px; }
+  .contrib-row { display: grid; grid-template-columns: 160px 1fr 90px; align-items: center; gap: 10px; }
+  .contrib-key { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text-dim); }
+  .contrib-key .desc { display: block; font-size: 10.5px; color: var(--text-faint); }
+  .contrib-bar-wrap { background: var(--grid); border-radius: 3px; height: 14px; overflow: hidden; }
+  .contrib-bar { height: 100%; border-radius: 3px; }
+  .contrib-val { font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-align: right; color: var(--text); }
+
+  .table-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 10px; flex-wrap: wrap; }
+  .table-toolbar input[type="search"] {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px; color: var(--text);
+    font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; padding: 7px 10px; width: 220px;
+  }
+
+  table.txn-table th { cursor: pointer; user-select: none; white-space: nowrap; }
+  table.txn-table th:hover { color: var(--text-dim); }
+  tr.txn-row { cursor: pointer; }
+  tr.txn-row:hover td { background: rgba(124,147,245,0.06); }
+  tr.detail-row td { padding: 16px 10px 24px; background: var(--panel-2); }
+  tr.detail-row.hidden { display: none; }
+  .txn-url { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--text-faint); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
+
+  footer { padding: 12px 20px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); font-family: 'IBM Plex Mono', monospace; }
+</style>
+</head>
+<body>
+
+<a class="skip-link" href="#main-panel">Skip to results</a>
+<header>
+  <h1 class="mark"><span class="bar"></span>DP LATENCY TRACE</h1>
+  <div class="sub">DataPower latency &amp; extended-latency analyzer — client-side, no data leaves this page</div>
+</header>
+
+<main>
+  <div class="panel-input">
+    <div class="toggle full" role="group" aria-label="Input mode">
+      <button type="button" id="mode-single" class="active">Single record</button>
+      <button type="button" id="mode-batch">Batch log file</button>
+    </div>
+
+    <div id="single-input">
+      <div>
+        <label class="field-label" for="raw">Log line</label>
+        <textarea id="raw" placeholder="Paste one Latency: or ExtLatency: log line..."></textarea>
+      </div>
+      <div class="btn-row" style="margin-top:12px;">
+        <button class="action primary" id="parse-btn">Parse</button>
+        <button class="action" id="sample-std-btn">Std sample</button>
+        <button class="action" id="sample-ext-btn">Ext sample</button>
+        <button class="action" id="clear-btn">Clear</button>
+      </div>
+      <div class="hint" style="margin-top:12px;">
+        Auto-detects Latency: (16 positional fields) vs ExtLatency: (keyword=value pairs). All durations are in milliseconds, per IBM's DataPower documentation.
+      </div>
+    </div>
+
+    <div id="batch-input" style="display:none;">
+      <label class="field-label">Log file</label>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="file-input" accept=".log,.txt" style="display:none;">
+        <div class="dropzone-text">Drop a .log / .txt file here, or <span class="link">browse</span></div>
+        <div class="dropzone-file" id="dropzone-file"></div>
+      </div>
+      <label class="field-label" style="margin-top:14px;">…or paste multiple lines</label>
+      <textarea id="batch-raw" placeholder="Paste a mix of Latency: and ExtLatency: lines here..."></textarea>
+      <div class="btn-row" style="margin-top:12px;">
+        <button class="action primary" id="analyze-btn">Analyze log</button>
+        <button class="action" id="batch-clear-btn">Clear</button>
+      </div>
+      <div class="hint" style="margin-top:12px;">
+        Reads both Latency: and ExtLatency: lines from the same file and gives each its own view. Nothing is uploaded — parsing happens entirely in your browser.
+      </div>
+    </div>
+
+    <div class="status" id="status-box" role="status" aria-live="polite"></div>
+    <div class="error" id="error-box" role="alert" aria-live="assertive"></div>
+  </div>
+
+  <div class="panel-main" id="main-panel" tabindex="-1">
+    <div class="empty-state">
+      <div class="big">// waiting for input</div>
+      <div>Paste a record, or switch to batch mode and load a log file.</div>
+    </div>
+  </div>
+</main>
+
+<footer>Runs entirely in your browser. Nothing is uploaded or stored. Field order and durations follow IBM's DataPower Gateway documentation for standard and enhanced latency messages.</footer>
+
+<script>
+(function () {
+  const UNIT = "ms";
+
+  // ---- Standard Latency: correct logical order per IBM docs (position N in the raw record) ----
+  const STD_FIELDS = [
+    { position: 1,  label: "Read the request headers",             group: "Request Header Read" },
+    { position: 3,  label: "Started transform on the front side",  group: "Request Processing" },
+    { position: 7,  label: "Read the request body",                group: "Request Processing" },
+    { position: 6,  label: "Started processing of request rule",   group: "Request Processing" },
+    { position: 4,  label: "Completed processing of request rule", group: "Request Processing" },
+    { position: 15, label: "Attempted connection to the back side",group: "Backside Transmit" },
+    { position: 16, label: "Started connection with the server",   group: "Backside Transmit" },
+    { position: 2,  label: "Sent the request headers",             group: "Backside Transmit" },
+    { position: 5,  label: "Sent the entire request",              group: "Backside Transmit" },
+    { position: 8,  label: "Received the response headers",        group: "Receive Response Headers" },
+    { position: 10, label: "Started back side transform",          group: "Response Processing" },
+    { position: 14, label: "Read body from server",                group: "Response Processing" },
+    { position: 13, label: "Started processing of response rule",  group: "Response Processing" },
+    { position: 11, label: "Completed processing of response rule",group: "Response Processing" },
+    { position: 9,  label: "Sent the response header to the client", group: "Transmit Response" },
+    { position: 12, label: "Sent the response to the client",      group: "Transmit Response" },
+  ];
+  const GROUP_ORDER = ["Request Header Read","Request Processing","Backside Transmit","Receive Response Headers","Response Processing","Transmit Response"];
+  const GROUP_COLORS = {
+    "Request Header Read":       "var(--c-rhr)",
+    "Request Processing":        "var(--c-reqproc)",
+    "Backside Transmit":         "var(--c-backxmit)",
+    "Receive Response Headers":  "var(--c-rsphdr)",
+    "Response Processing":       "var(--c-rspproc)",
+    "Transmit Response":         "var(--c-txresp)",
+  };
+
+  // ---- Extended Latency: keyword table per IBM docs ----
+  const EXT_KEYWORDS = {
+    AAA:"AAA policy processing", ACB:"Sign/verify/encrypt/decrypt binary content", ACL:"Call processing rule",
+    ACO:"Conditional action (if-then-else)", ACP:"Checkpoint event", ACV:"Convert query parameters to XML",
+    ADB:"Start of probe capture", AEA:"Read attachments after root", AES:"Event sink",
+    AEX:"XPath extraction", AFE:"Fetch remote document", AFI:"Filter",
+    AGS:"GatewayScript processing", AHR:"Header rewrite", AJWD:"JWT decrypt", AJWE:"JWT encrypt",
+    AJWS:"JWT sign", AJWV:"JWT verify", ALG:"Logging action", ALP:"For-each loop",
+    AMR:"Method rewrite", AOE:"On-error handling", APR:"Parse", APT:"Pass-through processor start",
+    APUA:"Unread attachments processing", ARA:"Asynchronous results", ARE:"Results processing",
+    ARS:"Route with variables", ART:"Route with XPath", ASA:"Read attachments before root",
+    ASLM:"SLM policy enforcement", ASM:"Stream attachments", ASQL:"SQL statement",
+    ASR:"Selectable rule run", AST:"Strip attachments", ASV:"Set variable", AVA:"Validate",
+    AVX:"Validate against schema", AXB:"Transform binary", AXF:"Transform XML",
+    AXN:"Transform with control file", AXP:"Transform with processing instructions",
+    BR:"Body read", BS:"Body sent", CS:"Connection started", HR:"Headers read", HS:"Header sent",
+    PC:"Completed processing rule action", PS:"Started processing rule", TC:"Transaction complete",
+    TS:"Transaction started",
+  };
+  const PHASE_COLORS = { Request: "var(--c-reqproc)", Response: "var(--c-rspproc)" };
+
+  const SAMPLE_STD = "Latency: 0 508 0 508 508 0 0 512 756 512 756 756 512 512 508 508 [http://host/your/service]";
+  const SAMPLE_EXT = "ExtLatency: HR=0,BR=0,PS=0,AAA=2,AXF=2,AXF=2,ARE=2,BS=2,CS=2,BS=3, == HR=4,BR=4,PS=4,AXF=5,ARE=5,ARA=5,BS=5,TC=5 [http://host/your/service]";
+
+  let batchStd = null, batchExt = null;
+  let batchView = "std";
+  let sortKeyStd = "total", sortDirStd = "desc";
+  let sortKeyExt = "total", sortDirExt = "desc";
+  const expandedStd = new Set();
+  const expandedExt = new Set();
+
+  const rawEl = document.getElementById("raw");
+  const batchRawEl = document.getElementById("batch-raw");
+  const mainPanel = document.getElementById("main-panel");
+  const errorBox = document.getElementById("error-box");
+  const modeSingleBtn = document.getElementById("mode-single");
+  const modeBatchBtn = document.getElementById("mode-batch");
+  const singleInput = document.getElementById("single-input");
+  const batchInput = document.getElementById("batch-input");
+  const dropzone = document.getElementById("dropzone");
+  const fileInput = document.getElementById("file-input");
+  const dropzoneFile = document.getElementById("dropzone-file");
+  const statusBox = document.getElementById("status-box");
+
+  // ---------- shared helpers ----------
+
+  function escapeHtml(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, ch => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[ch]));
+  }
+
+  function extractNumbers(text) {
+    const matches = text.match(/-?\d+(\.\d+)?/g);
+    return matches ? matches.map(Number) : [];
+  }
+
+  function findUrl(line) {
+    const m = line.match(/\[(https?:\/\/[^\]]+)\]/);
+    return m ? m[1] : null;
+  }
+
+  function percentile(sortedArr, p) {
+    if (sortedArr.length === 0) return 0;
+    const idx = Math.min(sortedArr.length - 1, Math.floor(p * sortedArr.length));
+    return sortedArr[idx];
+  }
+
+  function showError(msg) { errorBox.textContent = msg; errorBox.style.display = "block"; }
+  function hideError() { errorBox.style.display = "none"; }
+  function showStatus(msg) { statusBox.textContent = msg; statusBox.style.display = "block"; }
+  function hideStatus() { statusBox.style.display = "none"; }
+  function emptyState() {
+    mainPanel.innerHTML = '<div class="empty-state"><div class="big">// waiting for input</div><div>Paste a record, or switch to batch mode and load a log file.</div></div>';
+  }
+
+  // ---------- Standard Latency engine ----------
+
+  function computeStdTxn(durationsRaw) {
+    let prev = 0;
+    const rows = STD_FIELDS.map(f => {
+      const cumVal = durationsRaw[f.position - 1];
+      const dur = Math.max(cumVal - prev, 0);
+      const row = { label: f.label, group: f.group, duration: dur, start: prev, end: cumVal };
+      prev = cumVal;
+      return row;
+    });
+    const total = prev;
+    const groupTotals = {};
+    rows.forEach(r => { groupTotals[r.group] = (groupTotals[r.group] || 0) + r.duration; });
+    let bottleneckGroup = null, bottleneckDur = -1;
+    GROUP_ORDER.forEach(g => { const d = groupTotals[g] || 0; if (d > bottleneckDur) { bottleneckDur = d; bottleneckGroup = g; } });
+    return { rows, total, groupTotals, bottleneckGroup, bottleneckDur };
+  }
+
+  function toSegments(rows) {
+    const segments = [];
+    rows.forEach(r => {
+      const last = segments[segments.length - 1];
+      if (last && last.group === r.group) { last.end = r.end; last.duration += r.duration; }
+      else segments.push({ group: r.group, start: r.start, end: r.end, duration: r.duration });
+    });
+    return segments;
+  }
+
+  function waterfallHTML(segments, total, bottleneckGroup, opts) {
+    opts = opts || {};
+    const compact = !!opts.compact;
+    const title = opts.title || "Waterfall trace";
+    const btn = segments.find(s => s.group === bottleneckGroup);
+    const bottleneckPct = (total > 0 && btn) ? Math.round((btn.duration / total) * 100) : 0;
+
+    const segmentHtml = segments.map(seg => {
+      const leftPct = total > 0 ? (seg.start / total) * 100 : 0;
+      const widthPct = total > 0 ? Math.max((seg.duration / total) * 100, 0.3) : 0;
+      const isBottleneck = seg.group === bottleneckGroup;
+      const pct = total > 0 ? ((seg.duration/total)*100).toFixed(1) : 0;
+      const callout = (isBottleneck && !compact) ? `<div class="bottleneck-callout">▲ ${bottleneckPct}%</div>` : "";
+      return `<div class="segment${isBottleneck ? " bottleneck" : ""}" style="left:${leftPct}%;width:${widthPct}%;background:${GROUP_COLORS[seg.group]};" title="${escapeHtml(seg.group)}: ${seg.duration.toFixed(1)} ${UNIT} (${pct}%)">${callout}</div>`;
+    }).join("");
+
+    const tickCount = compact ? 4 : 6;
+    const ticks = Array.from({ length: tickCount + 1 }, (_, i) => Math.round((total * i) / tickCount));
+    const rulerHtml = ticks.map(t => `<span>${t}</span>`).join("");
+    const legendHtml = compact ? "" : `<div class="legend">${Object.entries(GROUP_COLORS).map(([g, c]) => `<div class="legend-item"><span class="swatch" style="background:${c}"></span>${escapeHtml(g)}</div>`).join("")}</div>`;
+
+    return `
+      <div class="trace-wrap${compact ? " compact" : ""}">
+        ${compact ? "" : `<div class="trace-title">${escapeHtml(title)}</div>`}
+        <div class="trace-track${compact ? " compact" : ""}">${segmentHtml}</div>
+        <div class="ruler">${rulerHtml}</div>
+        ${legendHtml}
+      </div>`;
+  }
+
+  function stageTableHTML(rows, total, bottleneckGroup) {
+    const tableRows = rows.map((r, i) => {
+      const isGroupStart = i === 0 || rows[i - 1].group !== r.group;
+      const isBottleneck = r.group === bottleneckGroup;
+      const pct = total > 0 ? ((r.duration / total) * 100).toFixed(1) : "0.0";
+      return `
+        <tr class="${isGroupStart ? "group-start" : ""} ${isBottleneck ? "is-bottleneck" : ""}">
+          <td>${isGroupStart ? `<span class="group-chip"><span class="swatch" style="background:${GROUP_COLORS[r.group]}"></span>${escapeHtml(r.group)}</span>` : ""}</td>
+          <td>${escapeHtml(r.label)}</td>
+          <td class="num">${r.end}</td>
+          <td class="num">${r.duration}</td>
+          <td class="num">${pct}%</td>
+        </tr>`;
+    }).join("");
+    return `
+      <table class="stage-table">
+        <thead><tr><th>Group</th><th>Stage</th><th class="num">Time (${UNIT})</th><th class="num">Duration (${UNIT})</th><th class="num">% of total</th></tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>`;
+  }
+
+  function parseStdLine(line) {
+    if (/ExtLatency:/i.test(line)) return null;
+    const idx = line.indexOf("Latency:");
+    if (idx === -1) return null;
+    const after = line.slice(idx + "Latency:".length);
+    const nums = extractNumbers(after);
+    if (nums.length < 16) return null;
+    return nums.slice(0, 16);
+  }
+
+  // ---------- Extended Latency engine ----------
+
+  function parseExtLine(line) {
+    const idx = line.indexOf("ExtLatency:");
+    if (idx === -1) return null;
+    const url = findUrl(line);
+    let end = line.length;
+    if (url) {
+      const bracketIdx = line.indexOf("[" + url + "]", idx);
+      if (bracketIdx !== -1) end = bracketIdx;
+    }
+    const body = line.slice(idx + "ExtLatency:".length, end);
+    const parts = body.split("==");
+    const reqRaw = parts[0] || "";
+    const respRaw = parts.length > 1 ? parts[1] : null;
+
+    function parseEntries(raw, phase) {
+      return raw.split(",").map(s => s.trim()).filter(Boolean).map(tok => {
+        const m = tok.match(/^([A-Za-z]+)=(-?\d+(?:\.\d+)?)$/);
+        if (!m) return null;
+        return { key: m[1], value: Number(m[2]), phase };
+      }).filter(Boolean);
+    }
+
+    const entries = parseEntries(reqRaw, "Request").concat(respRaw !== null ? parseEntries(respRaw, "Response") : []);
+    if (entries.length === 0) return null;
+    return { entries, url };
+  }
+
+  function computeExtTxn(entries) {
+    let prev = 0;
+    const occurrenceCounts = {};
+    const rows = entries.map(e => {
+      const dur = Math.max(e.value - prev, 0);
+      occurrenceCounts[e.key] = (occurrenceCounts[e.key] || 0) + 1;
+      const row = {
+        key: e.key,
+        label: EXT_KEYWORDS[e.key] || null,
+        phase: e.phase,
+        occurrence: occurrenceCounts[e.key],
+        duration: dur, start: prev, end: e.value,
+      };
+      prev = e.value;
+      return row;
+    });
+    const total = prev;
+    const phaseTotals = { Request: 0, Response: 0 };
+    rows.forEach(r => { phaseTotals[r.phase] += r.duration; });
+    let topEntry = null;
+    rows.forEach(r => { if (!topEntry || r.duration > topEntry.duration) topEntry = r; });
+    return { rows, total, phaseTotals, topEntry };
+  }
+
+  function extWaterfallHTML(rows, total, topEntry, opts) {
+    opts = opts || {};
+    const compact = !!opts.compact;
+    const bottleneckPct = (total > 0 && topEntry) ? Math.round((topEntry.duration / total) * 100) : 0;
+    const segmentHtml = rows.map(r => {
+      const leftPct = total > 0 ? (r.start / total) * 100 : 0;
+      const widthPct = total > 0 ? Math.max((r.duration / total) * 100, 0.3) : 0;
+      const isBottleneck = topEntry && r.start === topEntry.start && r.key === topEntry.key && r.occurrence === topEntry.occurrence;
+      const pct = total > 0 ? ((r.duration/total)*100).toFixed(1) : 0;
+      const callout = (isBottleneck && !compact) ? `<div class="bottleneck-callout">▲ ${bottleneckPct}%</div>` : "";
+      const desc = r.label ? `${r.key} - ${r.label}` : `${r.key} (unrecognized keyword)`;
+      return `<div class="segment${isBottleneck ? " bottleneck" : ""}" style="left:${leftPct}%;width:${widthPct}%;background:${PHASE_COLORS[r.phase]};" title="${escapeHtml(desc)}: ${r.duration.toFixed(1)} ${UNIT} (${pct}%) [${escapeHtml(r.phase)}]">${callout}</div>`;
+    }).join("");
+    const tickCount = compact ? 4 : 6;
+    const ticks = Array.from({ length: tickCount + 1 }, (_, i) => Math.round((total * i) / tickCount));
+    const rulerHtml = ticks.map(t => `<span>${t}</span>`).join("");
+    const legendHtml = compact ? "" : `<div class="legend">
+        <div class="legend-item"><span class="swatch" style="background:${PHASE_COLORS.Request}"></span>Request processing</div>
+        <div class="legend-item"><span class="swatch" style="background:${PHASE_COLORS.Response}"></span>Response processing</div>
+      </div>`;
+    return `
+      <div class="trace-wrap${compact ? " compact" : ""}">
+        ${compact ? "" : `<div class="trace-title">Waterfall trace (per action)</div>`}
+        <div class="trace-track dense${compact ? " compact" : ""}">${segmentHtml}</div>
+        <div class="ruler">${rulerHtml}</div>
+        ${legendHtml}
+      </div>`;
+  }
+
+  function extTableHTML(rows, total, topEntry) {
+    const tableRows = rows.map(r => {
+      const isBottleneck = topEntry && r.start === topEntry.start && r.key === topEntry.key && r.occurrence === topEntry.occurrence;
+      const pct = total > 0 ? ((r.duration / total) * 100).toFixed(1) : "0.0";
+      const desc = r.label ? escapeHtml(r.label) : '<span style="color:var(--text-faint)">unrecognized keyword</span>';
+      const occ = r.occurrence > 1 ? ` #${r.occurrence}` : "";
+      return `
+        <tr class="${isBottleneck ? "is-bottleneck" : ""}">
+          <td><span class="group-chip"><span class="swatch" style="background:${PHASE_COLORS[r.phase]}"></span>${escapeHtml(r.phase)}</span></td>
+          <td>${escapeHtml(r.key)}${occ}</td>
+          <td>${desc}</td>
+          <td class="num">${r.end}</td>
+          <td class="num">${r.duration}</td>
+          <td class="num">${pct}%</td>
+        </tr>`;
+    }).join("");
+    return `
+      <table class="stage-table">
+        <thead><tr><th>Phase</th><th>Keyword</th><th>Description</th><th class="num">Time (${UNIT})</th><th class="num">Duration (${UNIT})</th><th class="num">% of total</th></tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>`;
+  }
+
+  // ---------- mode switching ----------
+
+  modeSingleBtn.addEventListener("click", () => {
+    modeSingleBtn.classList.add("active"); modeBatchBtn.classList.remove("active");
+    singleInput.style.display = ""; batchInput.style.display = "none";
+    hideError(); hideStatus();
+  });
+  modeBatchBtn.addEventListener("click", () => {
+    modeBatchBtn.classList.add("active"); modeSingleBtn.classList.remove("active");
+    batchInput.style.display = ""; singleInput.style.display = "none";
+    hideError(); hideStatus();
+  });
+
+  // ---------- single mode ----------
+
+  document.getElementById("sample-std-btn").addEventListener("click", () => { rawEl.value = SAMPLE_STD; renderSingle(SAMPLE_STD); });
+  document.getElementById("sample-ext-btn").addEventListener("click", () => { rawEl.value = SAMPLE_EXT; renderSingle(SAMPLE_EXT); });
+  document.getElementById("clear-btn").addEventListener("click", () => { rawEl.value = ""; hideError(); hideStatus(); emptyState(); });
+  document.getElementById("parse-btn").addEventListener("click", () => renderSingle(rawEl.value));
+
+  function renderSingle(text) {
+    hideError(); hideStatus();
+    if (/ExtLatency:/i.test(text)) {
+      const parsed = parseExtLine(text);
+      if (!parsed) { showError("Found \"ExtLatency:\" but couldn't parse any KEY=VALUE pairs after it."); return; }
+      const { rows, total, topEntry } = computeExtTxn(parsed.entries);
+      const pct = total > 0 ? Math.round((topEntry.duration/total)*100) : 0;
+      mainPanel.innerHTML = `
+        <div class="badge"><span class="dot" style="background:${PHASE_COLORS.Response}"></span>Detected: Extended Latency (ExtLatency)</div>
+        <div class="stat-row">
+          <div class="stat"><div class="label">Total latency</div><div class="value">${total.toLocaleString()} ${UNIT}</div></div>
+          <div class="stat"><div class="label">Biggest single action</div><div class="value amber small">${escapeHtml(topEntry.key)}${topEntry.label ? " - " + escapeHtml(topEntry.label) : ""}</div><div class="sub">${topEntry.duration.toLocaleString()} ${UNIT} - ${pct}% of total</div></div>
+          <div class="stat"><div class="label">Actions parsed</div><div class="value">${rows.length}</div></div>
+        </div>
+        ${extWaterfallHTML(rows, total, topEntry)}
+        ${extTableHTML(rows, total, topEntry)}
+      `;
+      return;
+    }
+    if (/Latency:/i.test(text)) {
+      const durations = parseStdLine(text);
+      if (!durations) { showError("Found \"Latency:\" but couldn't find 16 numbers after it."); return; }
+      const { rows, total, bottleneckGroup, bottleneckDur } = computeStdTxn(durations);
+      const bottleneckPct = total > 0 ? Math.round((bottleneckDur / total) * 100) : 0;
+      const segments = toSegments(rows);
+      mainPanel.innerHTML = `
+        <div class="badge"><span class="dot" style="background:${GROUP_COLORS["Backside Transmit"]}"></span>Detected: Standard Latency</div>
+        <div class="stat-row">
+          <div class="stat"><div class="label">Total latency</div><div class="value">${total.toLocaleString()} ${UNIT}</div></div>
+          <div class="stat"><div class="label">Bottleneck stage</div><div class="value amber">${escapeHtml(bottleneckGroup)}</div><div class="sub">${bottleneckDur.toLocaleString()} ${UNIT} - ${bottleneckPct}% of total</div></div>
+          <div class="stat"><div class="label">Fields parsed</div><div class="value">16 / 16</div></div>
+        </div>
+        ${waterfallHTML(segments, total, bottleneckGroup)}
+        ${stageTableHTML(rows, total, bottleneckGroup)}
+      `;
+      return;
+    }
+    showError('No "Latency:" or "ExtLatency:" marker found in that text.');
+  }
+
+  // ---------- batch mode ----------
+
+  document.getElementById("batch-clear-btn").addEventListener("click", () => {
+    batchRawEl.value = ""; dropzoneFile.textContent = ""; hideError(); hideStatus();
+    batchStd = null; batchExt = null;
+    emptyState();
+  });
+
+  dropzone.addEventListener("click", () => fileInput.click());
+  dropzone.addEventListener("dragover", e => { e.preventDefault(); dropzone.classList.add("dragover"); });
+  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+  dropzone.addEventListener("drop", e => {
+    e.preventDefault(); dropzone.classList.remove("dragover");
+    if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener("change", () => { if (fileInput.files.length) loadFile(fileInput.files[0]); });
+
+  function loadFile(file) {
+    dropzoneFile.textContent = `${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+    const reader = new FileReader();
+    reader.onload = () => { batchRawEl.value = reader.result; analyzeLog(reader.result); };
+    reader.onerror = () => showError("Couldn't read that file. Try again or paste the lines directly.");
+    reader.readAsText(file);
+  }
+
+  document.getElementById("analyze-btn").addEventListener("click", () => analyzeLog(batchRawEl.value));
+
+  function parseLogRecords(text) {
+    const lines = text.split(/\r?\n/);
+    const std = [], ext = [];
+    lines.forEach(line => {
+      if (/ExtLatency:/i.test(line)) {
+        const parsed = parseExtLine(line);
+        if (!parsed) return;
+        const tsMatch = line.match(/^\s*(\S.*?\d{4}\s+[\d:]+)/);
+        const computed = computeExtTxn(parsed.entries);
+        ext.push({ n: ext.length + 1, ts: tsMatch ? tsMatch[1] : null, url: parsed.url, ...computed });
+      } else if (/Latency:/i.test(line)) {
+        const durations = parseStdLine(line);
+        if (!durations) return;
+        const url = findUrl(line);
+        const tsMatch = line.match(/^\s*(\S.*?\d{4}\s+[\d:]+)/);
+        const computed = computeStdTxn(durations);
+        std.push({ n: std.length + 1, ts: tsMatch ? tsMatch[1] : null, url, ...computed });
+      }
+    });
+    return { std, ext };
+  }
+
+  function analyzeLog(text) {
+    hideError(); hideStatus();
+    const { std, ext } = parseLogRecords(text);
+
+    if (std.length === 0 && ext.length === 0) {
+      showError('No Latency: or ExtLatency: records found. Expected lines with "Latency:" followed by 16 numbers, or "ExtLatency:" followed by KEY=VALUE pairs.');
+      return;
+    }
+
+    batchStd = std.length ? std : null;
+    batchExt = ext.length ? ext : null;
+    batchView = batchStd ? "std" : "ext";
+    sortKeyStd = "total"; sortDirStd = "desc"; expandedStd.clear();
+    sortKeyExt = "total"; sortDirExt = "desc"; expandedExt.clear();
+    showStatus(`Parsed ${std.length.toLocaleString()} standard Latency record(s) and ${ext.length.toLocaleString()} ExtLatency record(s).`);
+    renderBatch();
+  }
+
+  function renderBatch() {
+    const showTabs = batchStd && batchExt;
+    let tabsHtml = "";
+    if (showTabs) {
+      tabsHtml = `
+        <div class="result-tabs">
+          <button data-view="std" class="${batchView === "std" ? "active" : ""}">Standard Latency (${batchStd.length})</button>
+          <button data-view="ext" class="${batchView === "ext" ? "active" : ""}">Extended Latency (${batchExt.length})</button>
+        </div>`;
+    }
+    const validationHtml = showTabs ? renderCrossFormatValidation(batchStd, batchExt) : "";
+    const body = batchView === "ext" && batchExt ? renderExtBatchBody() : (batchStd ? renderStdBatchBody() : renderExtBatchBody());
+    mainPanel.innerHTML = tabsHtml + validationHtml + body;
+
+    if (showTabs) {
+      mainPanel.querySelectorAll(".result-tabs button").forEach(btn => {
+        btn.addEventListener("click", () => { batchView = btn.getAttribute("data-view"); renderBatch(); });
+      });
+    }
+    if (batchView === "std" && batchStd) attachStdTableHandlers();
+    if (batchView === "ext" && batchExt) attachExtTableHandlers();
+  }
+
+  function compareCrossFormat(stdTxns, extTxns) {
+    const pairCount = Math.min(stdTxns.length, extTxns.length);
+    let exact = 0, withinOne = 0, beyondOne = 0, maxDelta = 0;
+    for (let i = 0; i < pairCount; i++) {
+      const delta = Math.abs(stdTxns[i].total - extTxns[i].total);
+      maxDelta = Math.max(maxDelta, delta);
+      if (delta === 0) exact++;
+      else if (delta === 1) withinOne++;
+      else beyondOne++;
+    }
+    return {
+      pairCount,
+      exact,
+      withinOne,
+      beyondOne,
+      maxDelta,
+      unpaired: Math.abs(stdTxns.length - extTxns.length),
+    };
+  }
+
+  function renderCrossFormatValidation(stdTxns, extTxns) {
+    const result = compareCrossFormat(stdTxns, extTxns);
+    const warn = result.beyondOne > 0 || result.unpaired > 0;
+    return `
+      <div class="validation-panel${warn ? " warn" : ""}">
+        <div class="validation-title">Cross-format validation</div>
+        <div class="validation-grid">
+          <div class="stat"><div class="label">Paired by file order</div><div class="value">${result.pairCount.toLocaleString()}</div></div>
+          <div class="stat"><div class="label">Exact total match</div><div class="value">${result.exact.toLocaleString()}</div></div>
+          <div class="stat"><div class="label">1 ms jitter</div><div class="value">${result.withinOne.toLocaleString()}</div></div>
+          <div class="stat"><div class="label">Over 1 ms delta</div><div class="value${result.beyondOne ? " amber" : ""}">${result.beyondOne.toLocaleString()}</div></div>
+          <div class="stat"><div class="label">Max delta</div><div class="value">${result.maxDelta.toLocaleString()} ${UNIT}</div></div>
+          ${result.unpaired ? `<div class="stat"><div class="label">Unpaired records</div><div class="value amber">${result.unpaired.toLocaleString()}</div></div>` : ""}
+        </div>
+      </div>`;
+  }
+
+  // ---- Standard batch view ----
+
+  function renderStdBatchBody() {
+    const txns = batchStd;
+    const totals = txns.map(t => t.total).sort((a, b) => a - b);
+    const sum = totals.reduce((a, b) => a + b, 0);
+    const avg = sum / totals.length;
+    const median = percentile(totals, 0.5);
+    const p95 = percentile(totals, 0.95);
+    const p99 = percentile(totals, 0.99);
+    const max = totals[totals.length - 1];
+
+    const bottleneckCounts = {};
+    txns.forEach(t => { bottleneckCounts[t.bottleneckGroup] = (bottleneckCounts[t.bottleneckGroup] || 0) + 1; });
+    let topBottleneck = null, topCount = -1;
+    Object.entries(bottleneckCounts).forEach(([g, c]) => { if (c > topCount) { topCount = c; topBottleneck = g; } });
+    const topBottleneckPct = Math.round((topCount / txns.length) * 100);
+
+    const groupAvg = {};
+    GROUP_ORDER.forEach(g => { groupAvg[g] = txns.reduce((a, t) => a + (t.groupTotals[g] || 0), 0) / txns.length; });
+    let cum = 0;
+    const aggRows = GROUP_ORDER.map(g => { const start = cum; cum += groupAvg[g]; return { group: g, start, end: cum, duration: groupAvg[g] }; });
+    const aggTotal = cum;
+    let aggBottleneck = null, aggBottleneckDur = -1;
+    aggRows.forEach(r => { if (r.duration > aggBottleneckDur) { aggBottleneckDur = r.duration; aggBottleneck = r.group; } });
+
+    const histHtml = buildHistogram(totals);
+    const timelineHtml = buildTimeline(txns, t => GROUP_COLORS[t.bottleneckGroup], t => `#${t.n} - ${t.total.toLocaleString()} ${UNIT} - ${t.bottleneckGroup}`);
+
+    return `
+      <div class="stat-row">
+        <div class="stat"><div class="label">Transactions</div><div class="value">${txns.length.toLocaleString()}</div></div>
+        <div class="stat"><div class="label">Avg total</div><div class="value">${avg.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">p50</div><div class="value">${median.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">p95</div><div class="value">${p95.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">p99</div><div class="value">${p99.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">Max</div><div class="value">${max.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">Most common bottleneck</div><div class="value amber small">${escapeHtml(topBottleneck)}</div><div class="sub">${topCount} of ${txns.length} txns (${topBottleneckPct}%)</div></div>
+      </div>
+      ${waterfallHTML(aggRows, aggTotal, aggBottleneck, { title: "Average transaction (representative waterfall)" })}
+      <div class="section-title">Latency distribution</div>
+      ${histHtml}
+      <div class="section-title">Timeline across file${timelineHtml.note}</div>
+      ${timelineHtml.html}
+      <div class="timeline-caption">Bar height = total latency · colour = bottleneck stage for that transaction</div>
+      <div class="section-title">Transactions</div>
+      <div class="table-toolbar">
+        <input type="search" id="std-search" placeholder="Filter by # or URL…">
+        <button class="action small" id="std-export-csv">Export CSV</button>
+      </div>
+      <div id="std-table-wrap"></div>
+    `;
+  }
+
+  function attachStdTableHandlers() {
+    document.getElementById("std-export-csv").addEventListener("click", () => exportCsv(batchStd, "dp-latency-standard.csv", t => [t.n, t.ts, t.url, t.total, t.bottleneckGroup, t.bottleneckDur]));
+    document.getElementById("std-search").addEventListener("input", e => renderStdTable(e.target.value));
+    renderStdTable("");
+  }
+
+  function renderStdTable(filter) {
+    let list = batchStd.slice();
+    if (filter && filter.trim()) {
+      const f = filter.trim().toLowerCase();
+      list = list.filter(t => String(t.n).includes(f) || (t.url && t.url.toLowerCase().includes(f)));
+    }
+    list.sort((a, b) => {
+      const av = sortKeyStd === "n" ? a.n : sortKeyStd === "total" ? a.total : a.bottleneckDur;
+      const bv = sortKeyStd === "n" ? b.n : sortKeyStd === "total" ? b.total : b.bottleneckDur;
+      return sortDirStd === "asc" ? av - bv : bv - av;
+    });
+    const cap = 500;
+    const shown = list.slice(0, cap);
+    const arrow = dir => dir === "asc" ? "^" : "v";
+    const rowsHtml = shown.map(t => {
+      const isExpanded = expandedStd.has(t.n);
+      const segments = toSegments(t.rows);
+      return `
+        <tr class="txn-row" data-n="${t.n}">
+          <td class="num">${t.n}</td><td>${t.ts ? escapeHtml(t.ts) : "-"}</td>
+          <td>${t.url ? `<span class="txn-url" title="${escapeHtml(t.url)}">${escapeHtml(t.url)}</span>` : "-"}</td>
+          <td class="num">${t.total.toLocaleString()} ${UNIT}</td>
+          <td><span class="group-chip"><span class="swatch" style="background:${GROUP_COLORS[t.bottleneckGroup]}"></span>${escapeHtml(t.bottleneckGroup)}</span></td>
+        </tr>
+        <tr class="detail-row ${isExpanded ? "" : "hidden"}" data-detail-for="${t.n}">
+          <td colspan="5">${isExpanded ? waterfallHTML(segments, t.total, t.bottleneckGroup, { compact: true }) + stageTableHTML(t.rows, t.total, t.bottleneckGroup) : ""}</td>
+        </tr>`;
+    }).join("");
+    const capNote = list.length > cap ? `<div class="hint" style="margin-top:8px;">Showing top ${cap} of ${list.length} matching transactions by current sort.</div>` : "";
+    document.getElementById("std-table-wrap").innerHTML = `
+      <table class="txn-table">
+        <thead><tr>
+          <th data-key="n">#${sortKeyStd === "n" ? " " + arrow(sortDirStd) : ""}</th>
+          <th>Timestamp</th><th>Endpoint</th>
+          <th class="num" data-key="total">Total ${UNIT}${sortKeyStd === "total" ? " " + arrow(sortDirStd) : ""}</th>
+          <th data-key="bottleneck">Bottleneck${sortKeyStd === "bottleneck" ? " " + arrow(sortDirStd) : ""}</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>${capNote}`;
+    document.querySelectorAll("#std-table-wrap th[data-key]").forEach(th => {
+      th.addEventListener("click", () => {
+        const key = th.getAttribute("data-key");
+        if (sortKeyStd === key) sortDirStd = sortDirStd === "asc" ? "desc" : "asc"; else { sortKeyStd = key; sortDirStd = "desc"; }
+        renderStdTable(document.getElementById("std-search").value);
+      });
+    });
+    document.querySelectorAll("#std-table-wrap tr.txn-row").forEach(tr => {
+      tr.addEventListener("click", () => {
+        const n = Number(tr.getAttribute("data-n"));
+        if (expandedStd.has(n)) expandedStd.delete(n); else expandedStd.add(n);
+        renderStdTable(document.getElementById("std-search").value);
+      });
+    });
+  }
+
+  // ---- Extended batch view ----
+
+  function renderExtBatchBody() {
+    const txns = batchExt;
+    const totals = txns.map(t => t.total).sort((a, b) => a - b);
+    const sum = totals.reduce((a, b) => a + b, 0);
+    const avg = sum / totals.length;
+    const median = percentile(totals, 0.5);
+    const p95 = percentile(totals, 0.95);
+    const p99 = percentile(totals, 0.99);
+    const max = totals[totals.length - 1];
+
+    const bottleneckCounts = {};
+    txns.forEach(t => { const k = `${t.topEntry.phase}:${t.topEntry.key}`; bottleneckCounts[k] = (bottleneckCounts[k] || 0) + 1; });
+    let topBottleneck = null, topCount = -1;
+    Object.entries(bottleneckCounts).forEach(([k, c]) => { if (c > topCount) { topCount = c; topBottleneck = k; } });
+    const topBottleneckPct = Math.round((topCount / txns.length) * 100);
+    const [topPhase, topKey] = topBottleneck.split(":");
+    const topDesc = EXT_KEYWORDS[topKey] || null;
+
+    // top contributors: avg duration per phase:key across all transactions
+    const contribSums = {}, contribCounts = {};
+    txns.forEach(t => {
+      const perTxn = {};
+      t.rows.forEach(r => { const k = `${r.phase}:${r.key}`; perTxn[k] = (perTxn[k] || 0) + r.duration; });
+      Object.entries(perTxn).forEach(([k, v]) => { contribSums[k] = (contribSums[k] || 0) + v; contribCounts[k] = (contribCounts[k] || 0) + 1; });
+    });
+    const contribList = Object.keys(contribSums).map(k => ({ key: k, avg: contribSums[k] / txns.length }))
+      .sort((a, b) => b.avg - a.avg).slice(0, 15);
+    const maxContrib = contribList.length ? contribList[0].avg : 1;
+    const contribHtml = contribList.map(c => {
+      const [phase, key] = c.key.split(":");
+      const desc = EXT_KEYWORDS[key] || "unrecognized keyword";
+      const widthPct = (c.avg / maxContrib) * 100;
+      return `
+        <div class="contrib-row">
+          <div class="contrib-key">${escapeHtml(phase)}: ${escapeHtml(key)}<span class="desc">${escapeHtml(desc)}</span></div>
+          <div class="contrib-bar-wrap"><div class="contrib-bar" style="width:${widthPct}%;background:${PHASE_COLORS[phase]}"></div></div>
+          <div class="contrib-val">${c.avg.toFixed(1)} ${UNIT}</div>
+        </div>`;
+    }).join("");
+
+    const histHtml = buildHistogram(totals);
+    const timelineHtml = buildTimeline(txns, t => PHASE_COLORS[t.topEntry.phase], t => `#${t.n} - ${t.total.toLocaleString()} ${UNIT} - biggest action: ${t.topEntry.key}`);
+
+    return `
+      <div class="stat-row">
+        <div class="stat"><div class="label">Transactions</div><div class="value">${txns.length.toLocaleString()}</div></div>
+        <div class="stat"><div class="label">Avg total</div><div class="value">${avg.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">p50</div><div class="value">${median.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">p95</div><div class="value">${p95.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">p99</div><div class="value">${p99.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">Max</div><div class="value">${max.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">Most common single bottleneck</div><div class="value amber small">${escapeHtml(topPhase)}: ${escapeHtml(topKey)}${topDesc ? " - " + escapeHtml(topDesc) : ""}</div><div class="sub">${topCount} of ${txns.length} txns (${topBottleneckPct}%)</div></div>
+      </div>
+      <div class="section-title">Top contributors (avg duration per action, across all transactions)</div>
+      <div class="contrib-list">${contribHtml}</div>
+      <div class="section-title">Latency distribution</div>
+      ${histHtml}
+      <div class="section-title">Timeline across file${timelineHtml.note}</div>
+      ${timelineHtml.html}
+      <div class="timeline-caption">Bar height = total latency - colour = phase of that transaction's single biggest action</div>
+      <div class="section-title">Transactions</div>
+      <div class="table-toolbar">
+        <input type="search" id="ext-search" placeholder="Filter by # or URL…">
+        <button class="action small" id="ext-export-csv">Export CSV</button>
+      </div>
+      <div id="ext-table-wrap"></div>
+    `;
+  }
+
+  function attachExtTableHandlers() {
+    document.getElementById("ext-export-csv").addEventListener("click", () => exportCsv(batchExt, "dp-latency-extended.csv", t => [t.n, t.ts, t.url, t.total, `${t.topEntry.phase}:${t.topEntry.key}`, t.topEntry.duration]));
+    document.getElementById("ext-search").addEventListener("input", e => renderExtTable(e.target.value));
+    renderExtTable("");
+  }
+
+  function renderExtTable(filter) {
+    let list = batchExt.slice();
+    if (filter && filter.trim()) {
+      const f = filter.trim().toLowerCase();
+      list = list.filter(t => String(t.n).includes(f) || (t.url && t.url.toLowerCase().includes(f)));
+    }
+    list.sort((a, b) => {
+      const av = sortKeyExt === "n" ? a.n : sortKeyExt === "total" ? a.total : a.topEntry.duration;
+      const bv = sortKeyExt === "n" ? b.n : sortKeyExt === "total" ? b.total : b.topEntry.duration;
+      return sortDirExt === "asc" ? av - bv : bv - av;
+    });
+    const cap = 500;
+    const shown = list.slice(0, cap);
+    const arrow = dir => dir === "asc" ? "^" : "v";
+    const rowsHtml = shown.map(t => {
+      const isExpanded = expandedExt.has(t.n);
+      return `
+        <tr class="txn-row" data-n="${t.n}">
+          <td class="num">${t.n}</td><td>${t.ts ? escapeHtml(t.ts) : "-"}</td>
+          <td>${t.url ? `<span class="txn-url" title="${escapeHtml(t.url)}">${escapeHtml(t.url)}</span>` : "-"}</td>
+          <td class="num">${t.total.toLocaleString()} ${UNIT}</td>
+          <td><span class="group-chip"><span class="swatch" style="background:${PHASE_COLORS[t.topEntry.phase]}"></span>${escapeHtml(t.topEntry.key)}</span></td>
+        </tr>
+        <tr class="detail-row ${isExpanded ? "" : "hidden"}" data-detail-for="${t.n}">
+          <td colspan="5">${isExpanded ? extWaterfallHTML(t.rows, t.total, t.topEntry, { compact: true }) + extTableHTML(t.rows, t.total, t.topEntry) : ""}</td>
+        </tr>`;
+    }).join("");
+    const capNote = list.length > cap ? `<div class="hint" style="margin-top:8px;">Showing top ${cap} of ${list.length} matching transactions by current sort.</div>` : "";
+    document.getElementById("ext-table-wrap").innerHTML = `
+      <table class="txn-table">
+        <thead><tr>
+          <th data-key="n">#${sortKeyExt === "n" ? " " + arrow(sortDirExt) : ""}</th>
+          <th>Timestamp</th><th>Endpoint</th>
+          <th class="num" data-key="total">Total ${UNIT}${sortKeyExt === "total" ? " " + arrow(sortDirExt) : ""}</th>
+          <th data-key="bottleneck">Biggest action${sortKeyExt === "bottleneck" ? " " + arrow(sortDirExt) : ""}</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>${capNote}`;
+    document.querySelectorAll("#ext-table-wrap th[data-key]").forEach(th => {
+      th.addEventListener("click", () => {
+        const key = th.getAttribute("data-key");
+        if (sortKeyExt === key) sortDirExt = sortDirExt === "asc" ? "desc" : "asc"; else { sortKeyExt = key; sortDirExt = "desc"; }
+        renderExtTable(document.getElementById("ext-search").value);
+      });
+    });
+    document.querySelectorAll("#ext-table-wrap tr.txn-row").forEach(tr => {
+      tr.addEventListener("click", () => {
+        const n = Number(tr.getAttribute("data-n"));
+        if (expandedExt.has(n)) expandedExt.delete(n); else expandedExt.add(n);
+        renderExtTable(document.getElementById("ext-search").value);
+      });
+    });
+  }
+
+  // ---- shared batch widgets ----
+
+  function buildHistogram(sortedTotals) {
+    const binCount = 12;
+    const min = sortedTotals[0], maxT = sortedTotals[sortedTotals.length - 1];
+    const range = Math.max(maxT - min, 1);
+    const bins = new Array(binCount).fill(0);
+    sortedTotals.forEach(t => { let b = Math.floor(((t - min) / range) * binCount); if (b >= binCount) b = binCount - 1; bins[b]++; });
+    const maxBin = Math.max(...bins, 1);
+    const histBars = bins.map(c => `<div class="hist-bar"><div class="bar" style="height:${(c/maxBin)*100}%" title="${c} transaction(s)"></div></div>`).join("");
+    const histLabels = bins.map((_, i) => `<span>${Math.round(min + (range * i) / binCount)}</span>`).join("");
+    return `<div class="histogram">${histBars}</div><div class="hist-labels">${histLabels}</div>`;
+  }
+
+  function buildTimeline(txns, colorFn, titleFn) {
+    const maxBars = 1200;
+    const step = Math.max(1, Math.ceil(txns.length / maxBars));
+    const maxTotal = Math.max(...txns.map(t => t.total), 1);
+    const bars = [];
+    for (let i = 0; i < txns.length; i += step) {
+      const t = txns[i];
+      const h = Math.max((t.total / maxTotal) * 100, 2);
+      bars.push(`<div class="timeline-bar" style="height:${h}%;background:${colorFn(t)}" title="${escapeHtml(titleFn(t))}"></div>`);
+    }
+    return { html: `<div class="timeline">${bars.join("")}</div>`, note: step > 1 ? ` (downsampled, showing 1 of every ${step})` : " (file order)" };
+  }
+
+  function exportCsv(txns, filename, rowFn) {
+    const header = ["#", "timestamp", "endpoint", `total_${UNIT}`, "bottleneck", `bottleneck_${UNIT}`];
+    const lines = [header.join(",")];
+    txns.forEach(t => {
+      const esc = v => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+      const vals = rowFn(t);
+      lines.push([vals[0], esc(vals[1]), esc(vals[2]), vals[3], esc(vals[4]), vals[5]].join(","));
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  window.DpLatencyTraceTest = {
+    parseStdLine,
+    parseExtLine,
+    computeStdTxn,
+    computeExtTxn,
+    compareCrossFormat,
+    parseLogRecords,
+  };
+})();
+</script>
+
+</body>
+</html>
