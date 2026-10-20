@@ -40,7 +40,15 @@ For an out-of-order enhanced timestamp, the display cursor stays at its previous
 - Comparable pairs use raw standard position 12 and raw enhanced `TC`. Conflicting standard endpoints and incomplete/conflicting enhanced records are excluded. These endpoints represent different events, so 1 ms is reported as a difference, not a universal IBM tolerance.
 - Timestamp extraction reads supported formats from the prefix only (DataPower weekday/month/day/year/time or ISO timestamp); absent/unsupported timestamps remain empty. Probe JSON wrappers need conversion to textual records.
 
-## Regression Test
+## Charts and IBM keyword descriptions
+
+Histogram heights are proportional to transaction counts; empty bins have zero height. The timeline uses one bar per record for up to 1,200 records. Larger inputs use contiguous groups, with each bar showing its group's maximum observed latency. Tooltips identify the group range and peak transaction; colours belong to that peak transaction. Grouping retains each group's maximum, not every smaller fluctuation inside it. Zero elapsed values have zero-height bars.
+
+Enhanced contributors show **average contribution per transaction**: repeated occurrences of a keyword are combined within each phase, then averaged across all parsed transactions, including zero contribution when the keyword is absent. Partial/conflicting observations follow the disclosed batch inclusion policy.
+
+Descriptions include documented IBM DataPower API Gateway policy keys and the transport keys CA, DNS, CR and CC. Sources: [IBM policy keywords](https://www.ibm.com/docs/en/datapower-gateway/10.6.x?topic=gateway-latency-debug-data-policies) and [IBM message 0x80e007ad](https://www.ibm.com/docs/en/datapower-gateway/11.0.0?topic=messages-log-0x80exxxxx). Unknown keys remain visible without invented definitions; a key appearing in an example without a documented definition (such as rPC) remains unrecognized. This does not add generic third-party API gateway or JSON probe-wrapper support.
+
+## Regression coverage
 
 The repo test suite uses synthetic `Latency:` and `ExtLatency:` records so no production-style logs need to be published. It checks:
 
@@ -55,6 +63,7 @@ The repo test suite uses synthetic `Latency:` and `ExtLatency:` records so no pr
 - Timeline continuity, stage/group sums, raw-value preservation, and normalization warnings.
 - Enhanced regressions across phases, repeated/unknown keywords, conflicting TC, zero/fractional values, and 100 insertion-invariance cases.
 - Strict malformed-input diagnostics, completion state, scope and duplicate-identity handling, raw endpoint exclusions, and 100 reordered identity comparison sets.
+- Histogram counts and browser-measured heights, complete timeline group coverage and maxima across 100 deterministic datasets, a 150,001-record scale check, 43 documented policy/transport keywords, and repeated-action contributor denominators.
 
 Run:
 
