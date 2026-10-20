@@ -9,8 +9,9 @@ Open `index.html` in this folder, paste a single record or load a `.log`/`.txt` 
 - Parses standard `Latency:` records with the IBM-documented 16-field logical order.
 - Parses enhanced `ExtLatency:` records as separate `KEY=VALUE` request/response timelines.
 - Treats all timestamp values as cumulative milliseconds from transaction start.
-- Calculates each stage/action duration as `current cumulative value - previous cumulative value`.
-- Clamps small negative calculated durations to `0 ms` to avoid clock-sampling noise.
+- Standard timelines use `displayEnd = max(previousDisplayEnd, rawTimestamp)`, then subtract the previous display end. This matches dpShowLatency and prevents duplicate elapsed time after a backward timestamp.
+- Standard rows retain raw timestamps and flag adjusted display times; a conflicting final timestamp is explicitly flagged for review.
+- Extended action duration calculations are unchanged.
 - Keeps unknown enhanced-latency keywords visible by raw key instead of guessing.
 - Supports mixed logs containing both `Latency:` and `ExtLatency:` records.
 - Shows batch summaries, percentiles, waterfall views, histogram, timeline, expandable transaction rows, CSV export, and cross-format validation.
@@ -21,7 +22,9 @@ Standard `Latency:` fields are interpreted in this logical order:
 
 `1, 3, 7, 6, 4, 15, 16, 2, 5, 8, 10, 14, 13, 11, 9, 12`
 
-The tool deliberately does not sum the 16 raw standard fields. The final total is the final cumulative logical timestamp after the IBM field-order mapping.
+The tool deliberately does not sum the 16 raw standard fields. Standard totals use the final nondecreasing display timestamp (the maximum observed timestamp). For validated records this equals raw position 12. Streaming can change event order, so adjusted stage intervals are display allocations, not proof of exact event timing.
+
+The mapping and streaming caveat are documented in [IBM Latency messages](https://www.ibm.com/docs/en/datapower-gateway/10.6.x?topic=troubleshooting-latency-messages). The normalization behavior was checked against the [live dpShowLatency tool](https://pglezen.github.io/dpShowLatency/ShowLatency.html).
 
 `ExtLatency:` is not parsed as a variant of the 16-field format. It is parsed as comma-separated `KEY=VALUE` pairs split by `==`, with request and response phases kept separate.
 
@@ -36,6 +39,8 @@ The repo test suite uses synthetic `Latency:` and `ExtLatency:` records so no pr
 - Unknown keyword preservation.
 - Mixed-log parsing and cross-format total comparison.
 - No external font service calls.
+- All 16 displayed timestamps and durations for 100 cases captured from the live original website, including interior and terminal regressions.
+- Timeline continuity, stage/group sums, raw-value preservation, and normalization warnings.
 
 Run:
 
