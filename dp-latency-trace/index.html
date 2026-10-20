@@ -609,7 +609,7 @@
 
     function parseEntries(raw, phase) {
       return raw.split(",").map(s => s.trim()).filter(Boolean).map(tok => {
-        const m = tok.match(/^([A-Za-z]+)=(-?\d+(?:\.\d+)?)$/);
+        const m = tok.match(/^([A-Za-z][A-Za-z0-9]*)=(-?\d+(?:\.\d+)?)$/);
         if (!m) return null;
         return { key: m[1], value: Number(m[2]), phase };
       }).filter(Boolean);
@@ -624,16 +624,20 @@
     let prev = 0;
     const occurrenceCounts = {};
     const rows = entries.map(e => {
-      const dur = Math.max(e.value - prev, 0);
+      // Enhanced entries already have recorded event order; do not reorder
+      // keys or reset at the request/response separator. A backward value is
+      // an anomaly: preserve it, but never count the same elapsed time twice.
+      const end = Math.max(prev, e.value);
       occurrenceCounts[e.key] = (occurrenceCounts[e.key] || 0) + 1;
       const row = {
         key: e.key,
         label: EXT_KEYWORDS[e.key] || null,
         phase: e.phase,
         occurrence: occurrenceCounts[e.key],
-        duration: dur, start: prev, end: e.value,
+        duration: end - prev, start: prev, end,
+        rawEnd: e.value, adjusted: end !== e.value,
       };
-      prev = e.value;
+      prev = end;
       return row;
     });
     const total = prev;
@@ -641,16 +645,22 @@
     rows.forEach(r => { phaseTotals[r.phase] += r.duration; });
     let topEntry = null;
     rows.forEach(r => { if (!topEntry || r.duration > topEntry.duration) topEntry = r; });
-    return { rows, total, phaseTotals, topEntry };
+    const rawTotal = entries.length ? entries[entries.length - 1].value : 0;
+    const tcRows = rows.filter(r => r.key === "TC");
+    const rawTC = tcRows.length ? tcRows[tcRows.length - 1].rawEnd : null;
+    return { rows, total, phaseTotals, topEntry, rawTotal, rawTC,
+      normalizationCount: rows.filter(r => r.adjusted).length,
+      totalAdjusted: total !== rawTotal,
+      tcMismatch: rawTC !== null && rawTC !== total };
   }
 
   function extWaterfallHTML(rows, total, topEntry, opts) {
     opts = opts || {};
     const compact = !!opts.compact;
     const bottleneckPct = (total > 0 && topEntry) ? Math.round((topEntry.duration / total) * 100) : 0;
-    const segmentHtml = rows.map(r => {
+    const segmentHtml = rows.filter(r => r.duration > 0).map(r => {
       const leftPct = total > 0 ? (r.start / total) * 100 : 0;
-      const widthPct = total > 0 ? Math.max((r.duration / total) * 100, 0.3) : 0;
+      const widthPct = total > 0 ? (r.duration / total) * 100 : 0;
       const isBottleneck = topEntry && r.start === topEntry.start && r.key === topEntry.key && r.occurrence === topEntry.occurrence;
       const pct = total > 0 ? ((r.duration/total)*100).toFixed(1) : 0;
       const callout = (isBottleneck && !compact) ? `<div class="bottleneck-callout">▲ ${bottleneckPct}%</div>` : "";
@@ -674,6 +684,11 @@
   }
 
   function extTableHTML(rows, total, topEntry) {
+    const adjusted = rows.filter(r => r.adjusted);
+    const rawFinal = rows.length ? rows[rows.length - 1].rawEnd : 0;
+    const tcRows = rows.filter(r => r.key === "TC");
+    const rawTC = tcRows.length ? tcRows[tcRows.length - 1].rawEnd : null;
+    const totalConflict = rawFinal !== total || (rawTC !== null && rawTC !== total);
     const tableRows = rows.map(r => {
       const isBottleneck = topEntry && r.start === topEntry.start && r.key === topEntry.key && r.occurrence === topEntry.occurrence;
       const pct = total > 0 ? ((r.duration / total) * 100).toFixed(1) : "0.0";
@@ -684,14 +699,15 @@
           <td><span class="group-chip"><span class="swatch" style="background:${PHASE_COLORS[r.phase]}"></span>${escapeHtml(r.phase)}</span></td>
           <td>${escapeHtml(r.key)}${occ}</td>
           <td>${desc}</td>
-          <td class="num">${r.end}</td>
+          <td class="num">${r.end}${r.adjusted ? ` <span class="hint">(raw ${r.rawEnd})</span>` : ""}</td>
           <td class="num">${r.duration}</td>
           <td class="num">${pct}%</td>
         </tr>`;
     }).join("");
     return `
+      ${adjusted.length || totalConflict ? `<div class="validation-panel warn"><strong>${adjusted.length ? `${adjusted.length} out-of-order timestamp(s).` : "Conflicting completion timestamp."}</strong> The enhanced timeline keeps elapsed time from moving backward and retains raw values below. Verify this record: adjusted intervals are a display allocation, not exact measured action durations.${totalConflict ? ` <strong>The displayed total (${total} ms) is the observed maximum; the final raw timestamp (${rawFinal} ms)${rawTC !== null ? ` or raw TC (${rawTC} ms)` : ""} conflicts with that maximum. Verify transaction completion before relying on this total.</strong>` : ""}</div>` : ""}
       <table class="stage-table">
-        <thead><tr><th>Phase</th><th>Keyword</th><th>Description</th><th class="num">Time (${UNIT})</th><th class="num">Duration (${UNIT})</th><th class="num">% of total</th></tr></thead>
+        <thead><tr><th>Phase</th><th>Keyword</th><th>Description</th><th class="num">Display time (${UNIT})</th><th class="num">Duration (${UNIT})</th><th class="num">% of total</th></tr></thead>
         <tbody>${tableRows}</tbody>
       </table>`;
   }
@@ -1054,6 +1070,7 @@
         <div class="stat"><div class="label">Max</div><div class="value">${max.toFixed(0)} ${UNIT}</div></div>
         <div class="stat"><div class="label">Most common single bottleneck</div><div class="value amber small">${escapeHtml(topPhase)}: ${escapeHtml(topKey)}${topDesc ? " - " + escapeHtml(topDesc) : ""}</div><div class="sub">${topCount} of ${txns.length} txns (${topBottleneckPct}%)</div></div>
       </div>
+      ${txns.some(t => t.normalizationCount || t.totalAdjusted || t.tcMismatch) ? `<div class="validation-panel warn">${txns.filter(t => t.normalizationCount || t.totalAdjusted || t.tcMismatch).length} enhanced transaction(s) contain out-of-order or conflicting completion timestamps. Their waterfalls use nondecreasing display times; expand a transaction to inspect raw values. Verify these records before relying on action durations or totals.</div>` : ""}
       <div class="section-title">Top contributors (avg duration per action, across all transactions)</div>
       <div class="contrib-list">${contribHtml}</div>
       <div class="section-title">Latency distribution</div>
