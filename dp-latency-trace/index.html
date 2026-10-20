@@ -435,7 +435,7 @@
   const SAMPLE_STD = "Latency: 0 508 0 508 508 0 0 512 756 512 756 756 512 512 508 508 [http://host/your/service]";
   const SAMPLE_EXT = "ExtLatency: HR=0,BR=0,PS=0,AAA=2,AXF=2,AXF=2,ARE=2,BS=2,CS=2,BS=3, == HR=4,BR=4,PS=4,AXF=5,ARE=5,ARA=5,BS=5,TC=5 [http://host/your/service]";
 
-  let batchStd = null, batchExt = null;
+  let batchStd = null, batchExt = null, batchDiagnostics = [];
   let batchView = "std";
   let sortKeyStd = "total", sortDirStd = "desc";
   let sortKeyExt = "total", sortDirExt = "desc";
@@ -467,14 +467,8 @@
     }[ch]));
   }
 
-  function extractNumbers(text) {
-    const matches = text.match(/-?\d+(\.\d+)?/g);
-    return matches ? matches.map(Number) : [];
-  }
-
-  function findUrl(line) {
-    const m = line.match(/\[(https?:\/\/[^\]]+)\]/);
-    return m ? m[1] : null;
+  function keywordDescription(key) {
+    return Object.prototype.hasOwnProperty.call(EXT_KEYWORDS, key) ? EXT_KEYWORDS[key] : null;
   }
 
   function percentile(sortedArr, p) {
@@ -581,48 +575,71 @@
       </table>`;
   }
 
+  function inspectPayload(line, marker) {
+    const first = line.match(/\b(?:ExtLatency|Latency):/);
+    if (!first || first[0] !== marker) return { error: "Expected exactly one latency record marker." };
+    const prefix = line.slice(0, first.index);
+    const after = line.slice(first.index + marker.length).trim();
+    const bracket = after.indexOf("[");
+    const body = (bracket === -1 ? after : after.slice(0, bracket)).trim();
+    if (/\b(?:ExtLatency|Latency):/.test(body)) return { error: "Expected exactly one latency record marker." };
+    if (bracket === -1) return { body, prefix, url: null };
+    const endpoint = after.slice(bracket).match(/^\[([^\]\r\n]+)\]\s*$/);
+    if (!endpoint) return { error: "Malformed endpoint metadata or unexpected trailing content." };
+    return { body, prefix, url: endpoint[1] };
+  }
+
+  function elapsedNumber(token) {
+    if (!/^\d+(?:\.\d+)?$/.test(token)) return null;
+    const value = Number(token);
+    return Number.isFinite(value) && value <= Number.MAX_SAFE_INTEGER ? value : null;
+  }
+
+  function inspectStdLine(line) {
+    const payload = inspectPayload(line, "Latency:");
+    if (payload.error) return payload;
+    const tokens = payload.body.split(/\s+/).filter(Boolean);
+    if (tokens.length !== 16) return { error: `Expected 16 standard fields; found ${tokens.length}.` };
+    const values = tokens.map(elapsedNumber);
+    const invalid = values.findIndex(v => v === null);
+    if (invalid !== -1) return { error: `Invalid nonnegative elapsed value in standard field ${invalid + 1}.` };
+    return { ...payload, values };
+  }
+
   function parseStdLine(line) {
-    if (/ExtLatency:/i.test(line)) return null;
-    const idx = line.indexOf("Latency:");
-    if (idx === -1) return null;
-    const after = line.slice(idx + "Latency:".length);
-    const nums = extractNumbers(after);
-    if (nums.length < 16) return null;
-    return nums.slice(0, 16);
+    return inspectStdLine(line).values || null;
   }
 
   // ---------- Extended Latency engine ----------
 
+  function inspectExtLine(line) {
+    const payload = inspectPayload(line, "ExtLatency:");
+    if (payload.error) return payload;
+    const parts = payload.body.split("==");
+    if (parts.length > 2) return { error: "Multiple == separators: ambiguous phases; record rejected without truncating its tail." };
+    const entries = [];
+    for (let phaseIndex = 0; phaseIndex < parts.length; phaseIndex++) {
+      const tokens = parts[phaseIndex].trim().split(",").map(s => s.trim());
+      if (tokens[tokens.length - 1] === "") tokens.pop(); // IBM permits a trailing comma.
+      if (!tokens.length || tokens.some(t => !t)) return { error: "Empty enhanced phase or empty action token." };
+      for (let i = 0; i < tokens.length; i++) {
+        const m = tokens[i].match(/^([A-Za-z][A-Za-z0-9]*)=(.*)$/);
+        const value = m ? elapsedNumber(m[2]) : null;
+        if (!m || value === null) return { error: `Malformed enhanced token ${i + 1} in ${phaseIndex ? "response" : "request"} phase.` };
+        entries.push({ key: m[1], value, phase: phaseIndex ? "Response" : "Request" });
+      }
+    }
+    return { ...payload, entries };
+  }
+
   function parseExtLine(line) {
-    const idx = line.indexOf("ExtLatency:");
-    if (idx === -1) return null;
-    const url = findUrl(line);
-    let end = line.length;
-    if (url) {
-      const bracketIdx = line.indexOf("[" + url + "]", idx);
-      if (bracketIdx !== -1) end = bracketIdx;
-    }
-    const body = line.slice(idx + "ExtLatency:".length, end);
-    const parts = body.split("==");
-    const reqRaw = parts[0] || "";
-    const respRaw = parts.length > 1 ? parts[1] : null;
-
-    function parseEntries(raw, phase) {
-      return raw.split(",").map(s => s.trim()).filter(Boolean).map(tok => {
-        const m = tok.match(/^([A-Za-z][A-Za-z0-9]*)=(-?\d+(?:\.\d+)?)$/);
-        if (!m) return null;
-        return { key: m[1], value: Number(m[2]), phase };
-      }).filter(Boolean);
-    }
-
-    const entries = parseEntries(reqRaw, "Request").concat(respRaw !== null ? parseEntries(respRaw, "Response") : []);
-    if (entries.length === 0) return null;
-    return { entries, url };
+    const result = inspectExtLine(line);
+    return result.error ? null : result;
   }
 
   function computeExtTxn(entries) {
     let prev = 0;
-    const occurrenceCounts = {};
+    const occurrenceCounts = Object.create(null);
     const rows = entries.map(e => {
       // Enhanced entries already have recorded event order; do not reorder
       // keys or reset at the request/response separator. A backward value is
@@ -631,7 +648,7 @@
       occurrenceCounts[e.key] = (occurrenceCounts[e.key] || 0) + 1;
       const row = {
         key: e.key,
-        label: EXT_KEYWORDS[e.key] || null,
+        label: keywordDescription(e.key),
         phase: e.phase,
         occurrence: occurrenceCounts[e.key],
         duration: end - prev, start: prev, end,
@@ -649,9 +666,24 @@
     const tcRows = rows.filter(r => r.key === "TC");
     const rawTC = tcRows.length ? tcRows[tcRows.length - 1].rawEnd : null;
     return { rows, total, phaseTotals, topEntry, rawTotal, rawTC,
+      ...completionState(rows, total),
       normalizationCount: rows.filter(r => r.adjusted).length,
       totalAdjusted: total !== rawTotal,
       tcMismatch: rawTC !== null && rawTC !== total };
+  }
+
+  function completionState(rows, total) {
+    const tcRows = rows.filter(r => r.key === "TC");
+    const rawTC = tcRows.length ? tcRows[tcRows.length - 1].rawEnd : null;
+    const completionIssues = [];
+    if (!tcRows.length) completionIssues.push("Missing TC; transaction completion is unverified.");
+    else {
+      if (tcRows.length !== 1) completionIssues.push("Multiple TC events; completion is ambiguous.");
+      if (rows[rows.length - 1].key !== "TC") completionIssues.push("Events follow TC; completion is ambiguous.");
+      if (rawTC !== total) completionIssues.push("Raw TC conflicts with the observed maximum.");
+    }
+    const completionStatus = !tcRows.length ? "partial" : completionIssues.length ? "conflicting" : "complete";
+    return { completionStatus, completionIssues };
   }
 
   function extWaterfallHTML(rows, total, topEntry, opts) {
@@ -689,6 +721,7 @@
     const tcRows = rows.filter(r => r.key === "TC");
     const rawTC = tcRows.length ? tcRows[tcRows.length - 1].rawEnd : null;
     const totalConflict = rawFinal !== total || (rawTC !== null && rawTC !== total);
+    const completion = completionState(rows, total);
     const tableRows = rows.map(r => {
       const isBottleneck = topEntry && r.start === topEntry.start && r.key === topEntry.key && r.occurrence === topEntry.occurrence;
       const pct = total > 0 ? ((r.duration / total) * 100).toFixed(1) : "0.0";
@@ -705,6 +738,7 @@
         </tr>`;
     }).join("");
     return `
+      ${completion.completionStatus !== "complete" ? `<div class="validation-panel warn"><strong>${completion.completionStatus === "partial" ? "Partial record — observed elapsed time only." : "Completion unverified."}</strong> ${completion.completionIssues.map(escapeHtml).join(" ")} This record is excluded from raw endpoint comparisons.</div>` : ""}
       ${adjusted.length || totalConflict ? `<div class="validation-panel warn"><strong>${adjusted.length ? `${adjusted.length} out-of-order timestamp(s).` : "Conflicting completion timestamp."}</strong> The enhanced timeline keeps elapsed time from moving backward and retains raw values below. Verify this record: adjusted intervals are a display allocation, not exact measured action durations.${totalConflict ? ` <strong>The displayed total (${total} ms) is the observed maximum; the final raw timestamp (${rawFinal} ms)${rawTC !== null ? ` or raw TC (${rawTC} ms)` : ""} conflicts with that maximum. Verify transaction completion before relying on this total.</strong>` : ""}</div>` : ""}
       <table class="stage-table">
         <thead><tr><th>Phase</th><th>Keyword</th><th>Description</th><th class="num">Display time (${UNIT})</th><th class="num">Duration (${UNIT})</th><th class="num">% of total</th></tr></thead>
@@ -734,15 +768,16 @@
 
   function renderSingle(text) {
     hideError(); hideStatus();
-    if (/ExtLatency:/i.test(text)) {
-      const parsed = parseExtLine(text);
-      if (!parsed) { showError("Found \"ExtLatency:\" but couldn't parse any KEY=VALUE pairs after it."); return; }
-      const { rows, total, topEntry } = computeExtTxn(parsed.entries);
+    const marker = text.match(/\b(?:ExtLatency|Latency):/i)?.[0].toLowerCase();
+    if (marker === "extlatency:") {
+      const parsed = inspectExtLine(text);
+      if (parsed.error) { emptyState(); showError(parsed.error); return; }
+      const { rows, total, topEntry, completionStatus } = computeExtTxn(parsed.entries);
       const pct = total > 0 ? Math.round((topEntry.duration/total)*100) : 0;
       mainPanel.innerHTML = `
         <div class="badge"><span class="dot" style="background:${PHASE_COLORS.Response}"></span>Detected: Extended Latency (ExtLatency)</div>
         <div class="stat-row">
-          <div class="stat"><div class="label">Total latency</div><div class="value">${total.toLocaleString()} ${UNIT}</div></div>
+          <div class="stat"><div class="label">${completionStatus === "complete" ? "Total latency" : "Observed elapsed time"}</div><div class="value">${total.toLocaleString()} ${UNIT}</div></div>
           <div class="stat"><div class="label">Biggest single action</div><div class="value amber small">${escapeHtml(topEntry.key)}${topEntry.label ? " - " + escapeHtml(topEntry.label) : ""}</div><div class="sub">${topEntry.duration.toLocaleString()} ${UNIT} - ${pct}% of total</div></div>
           <div class="stat"><div class="label">Actions parsed</div><div class="value">${rows.length}</div></div>
         </div>
@@ -751,9 +786,10 @@
       `;
       return;
     }
-    if (/Latency:/i.test(text)) {
-      const durations = parseStdLine(text);
-      if (!durations) { showError("Found \"Latency:\" but couldn't find 16 numbers after it."); return; }
+    if (marker === "latency:") {
+      const parsed = inspectStdLine(text);
+      if (parsed.error) { emptyState(); showError(parsed.error); return; }
+      const durations = parsed.values;
       const { rows, total, bottleneckGroup, bottleneckDur } = computeStdTxn(durations);
       const bottleneckPct = total > 0 ? Math.round((bottleneckDur / total) * 100) : 0;
       const segments = toSegments(rows);
@@ -769,7 +805,7 @@
       `;
       return;
     }
-    showError('No "Latency:" or "ExtLatency:" marker found in that text.');
+    emptyState(); showError('No "Latency:" or "ExtLatency:" marker found in that text.');
   }
 
   // ---------- batch mode ----------
@@ -801,32 +837,60 @@
 
   function parseLogRecords(text) {
     const lines = text.split(/\r?\n/);
-    const std = [], ext = [];
-    lines.forEach(line => {
-      if (/ExtLatency:/i.test(line)) {
-        const parsed = parseExtLine(line);
-        if (!parsed) return;
-        const tsMatch = line.match(/^\s*(\S.*?\d{4}\s+[\d:]+)/);
-        const computed = computeExtTxn(parsed.entries);
-        ext.push({ n: ext.length + 1, ts: tsMatch ? tsMatch[1] : null, url: parsed.url, ...computed });
-      } else if (/Latency:/i.test(line)) {
-        const durations = parseStdLine(line);
-        if (!durations) return;
-        const url = findUrl(line);
-        const tsMatch = line.match(/^\s*(\S.*?\d{4}\s+[\d:]+)/);
-        const computed = computeStdTxn(durations);
-        std.push({ n: std.length + 1, ts: tsMatch ? tsMatch[1] : null, url, ...computed });
+    const std = [], ext = [], rejected = [], continuations = [];
+    let ignored = 0;
+    lines.forEach((line, index) => {
+      const marker = line.match(/\b(?:ExtLatency|Latency):/i)?.[0].toLowerCase();
+      const enhanced = marker === "extlatency:";
+      const standard = marker === "latency:";
+      if (!enhanced && !standard) {
+        if (/^\s*(?:==|[A-Za-z][A-Za-z0-9]*=)/.test(line) || (index > 0 && /\bLatency:/i.test(lines[index - 1]) && /^\s*\d+(?:\.\d+)?(?:\s+\d)/.test(line))) continuations.push({ line: index + 1, reason: "Unmarked continuation or action line; not joined to a transaction. Paste a complete record in single-record mode." });
+        else if (line.trim()) ignored++;
+        return;
       }
+      const parsed = enhanced ? inspectExtLine(line) : inspectStdLine(line);
+      if (parsed.error) { rejected.push({ line: index + 1, reason: parsed.error }); return; }
+      const computed = enhanced ? computeExtTxn(parsed.entries) : computeStdTxn(parsed.values);
+      const list = enhanced ? ext : std;
+      list.push({ n: list.length + 1, line: index + 1, ...recordMetadata(parsed.prefix), url: parsed.url, ...computed });
     });
-    return { std, ext };
+    return { std, ext, rejected, continuations, ignored };
+  }
+
+  function recordMetadata(prefix) {
+    const tids = Array.from(prefix.matchAll(/\btid\(([^)]+)\)/g), m => m[1]);
+    const gtids = Array.from(prefix.matchAll(/\bgtid\(([^)]+)\)/g), m => m[1]);
+    const tid = tids.length === 1 ? tids[0] : null;
+    const gtid = gtids.length === 1 ? gtids[0] : null;
+    const service = prefix.match(/\b(mpgw|wsgw|wsp|xmlfirewall|xml-firewall|apigw|api-gateway)\s*\(([^)]+)\)/i);
+    const syslogHost = prefix.match(/^\s*(?:<\d+>)?(?:1\s+)?\d{4}-\d{2}-\d{2}T\S+\s+([^\s\[]+)/)?.[1]
+      || prefix.match(/^\s*(?:<\d+>)?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+([^\s\[]+)/)?.[1];
+    const appliance = prefix.match(/\b(?:host|appliance|device)\(([^)]+)\)/i)?.[1] || syslogHost || null;
+    const scopePrefix = service ? prefix.slice(0, service.index) : prefix.split(/\btid\(/)[0];
+    const domains = Array.from(scopePrefix.matchAll(/\[([^\]]+)\]/g), m => m[1]).filter(s => !/^(?:0x[0-9a-f]+|extlatency|latency|debug|info|notice|warn(?:ing)?|error|alert|critical|emerg(?:ency)?)$/i.test(s));
+    const explicitDomain = prefix.match(/\bdomain\(([^)]+)\)/i)?.[1];
+    const domain = explicitDomain || (domains.length === 1 ? domains[0] : null);
+    // Do not infer date values from latency payload numbers.
+    const ts = prefix.match(/^\s*((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))(?=\s|$)/)?.[1] || null;
+    const scope = { appliance, domain, service: service ? `${service[1].toLowerCase()}(${service[2]})` : null };
+    return { ts, tid, gtid, scope, identity: tid && gtid && (explicitDomain || domains.length <= 1) ? JSON.stringify([appliance, domain, scope.service, tid, gtid]) : null };
+  }
+
+  function diagnosticsHTML(rejected = [], continuations = []) {
+    const issues = [...rejected.map(r => ({ ...r, reason: `Rejected record: ${r.reason}` })), ...continuations].sort((a,b) => a.line - b.line);
+    if (!issues.length) return "";
+    return `<div class="validation-panel warn"><strong>${rejected.length} rejected record(s); ${continuations.length} unassigned continuation line(s).</strong><details><summary>Input diagnostics (${issues.length})</summary><ul>${issues.map(r => `<li>Line ${r.line}: ${escapeHtml(r.reason)}</li>`).join("")}</ul></details></div>`;
   }
 
   function analyzeLog(text) {
     hideError(); hideStatus();
-    const { std, ext } = parseLogRecords(text);
+    const { std, ext, rejected, continuations, ignored } = parseLogRecords(text);
+    batchDiagnostics = [rejected, continuations];
 
     if (std.length === 0 && ext.length === 0) {
-      showError('No Latency: or ExtLatency: records found. Expected lines with "Latency:" followed by 16 numbers, or "ExtLatency:" followed by KEY=VALUE pairs.');
+      batchStd = null; batchExt = null;
+      emptyState(); mainPanel.innerHTML = diagnosticsHTML(rejected, continuations) + mainPanel.innerHTML;
+      showError('No valid latency records found. Review input diagnostics; standard records require exactly 16 nonnegative fields.');
       return;
     }
 
@@ -835,7 +899,7 @@
     batchView = batchStd ? "std" : "ext";
     sortKeyStd = "total"; sortDirStd = "desc"; expandedStd.clear();
     sortKeyExt = "total"; sortDirExt = "desc"; expandedExt.clear();
-    showStatus(`Parsed ${std.length.toLocaleString()} standard Latency record(s) and ${ext.length.toLocaleString()} ExtLatency record(s).`);
+    showStatus(`Parsed ${std.length.toLocaleString()} standard and ${ext.length.toLocaleString()} enhanced record(s). Rejected ${rejected.length}; unassigned continuations ${continuations.length}; ignored unrelated lines ${ignored}.`);
     renderBatch();
   }
 
@@ -851,7 +915,7 @@
     }
     const validationHtml = showTabs ? renderCrossFormatValidation(batchStd, batchExt) : "";
     const body = batchView === "ext" && batchExt ? renderExtBatchBody() : (batchStd ? renderStdBatchBody() : renderExtBatchBody());
-    mainPanel.innerHTML = tabsHtml + validationHtml + body;
+    mainPanel.innerHTML = diagnosticsHTML(...batchDiagnostics) + tabsHtml + validationHtml + body;
 
     if (showTabs) {
       mainPanel.querySelectorAll(".result-tabs button").forEach(btn => {
@@ -863,10 +927,26 @@
   }
 
   function compareCrossFormat(stdTxns, extTxns) {
-    const pairCount = Math.min(stdTxns.length, extTxns.length);
-    let exact = 0, withinOne = 0, beyondOne = 0, maxDelta = 0;
-    for (let i = 0; i < pairCount; i++) {
-      const delta = Math.abs(stdTxns[i].total - extTxns[i].total);
+    const group = txns => {
+      const map = new Map();
+      txns.forEach(t => { if (t.identity) { if (!map.has(t.identity)) map.set(t.identity, []); map.get(t.identity).push(t); } });
+      return map;
+    };
+    const standard = group(stdTxns), enhanced = group(extTxns);
+    let pairCount = 0, compared = 0, excluded = 0, exact = 0, withinOne = 0, beyondOne = 0, maxDelta = 0;
+    let ambiguous = 0;
+    const pairs = [];
+    for (const identity of new Set([...standard.keys(), ...enhanced.keys()])) {
+      const s = standard.get(identity) || [], e = enhanced.get(identity) || [];
+      if (s.length > 1 || e.length > 1) { ambiguous += s.length + e.length; continue; }
+      if (s.length !== 1 || e.length !== 1) continue;
+      pairCount++;
+      if (s[0].totalAdjusted || e[0].completionStatus !== "complete" || !Number.isFinite(s[0].rawTotal) || !Number.isFinite(e[0].rawTC)) {
+        excluded++; pairs.push({ standardLine: s[0].line, enhancedLine: e[0].line, standardRaw: s[0].rawTotal, enhancedTC: e[0].rawTC, comparable: false }); continue;
+      }
+      const delta = Math.abs(s[0].rawTotal - e[0].rawTC);
+      compared++;
+      pairs.push({ standardLine: s[0].line, enhancedLine: e[0].line, comparable: true, standardRaw: s[0].rawTotal, enhancedTC: e[0].rawTC, delta });
       maxDelta = Math.max(maxDelta, delta);
       if (delta === 0) exact++;
       else if (delta === 1) withinOne++;
@@ -874,28 +954,36 @@
     }
     return {
       pairCount,
+      compared, excluded, pairs, ambiguous,
       exact,
       withinOne,
       beyondOne,
       maxDelta,
-      unpaired: Math.abs(stdTxns.length - extTxns.length),
+      unpaired: stdTxns.length + extTxns.length - 2 * pairCount,
+      missingIdentity: [...stdTxns, ...extTxns].filter(t => !t.identity).length,
     };
   }
 
   function renderCrossFormatValidation(stdTxns, extTxns) {
     const result = compareCrossFormat(stdTxns, extTxns);
-    const warn = result.beyondOne > 0 || result.unpaired > 0;
+    const warn = result.beyondOne > 0 || result.unpaired > 0 || result.excluded > 0;
     return `
       <div class="validation-panel${warn ? " warn" : ""}">
-        <div class="validation-title">Cross-format validation</div>
+        <div class="validation-title">Raw endpoint comparison</div>
+        <p>Unique TID + GTID identities are matched with service, device and domain metadata when supplied. Missing or duplicate identities are not paired. Scope uses only metadata present in the log; split logs from different appliances/domains when that metadata is absent. Standard position 12 and enhanced TC are different completion events; differences are reported, not treated as a guaranteed parser tolerance.</p>
         <div class="validation-grid">
-          <div class="stat"><div class="label">Paired by file order</div><div class="value">${result.pairCount.toLocaleString()}</div></div>
-          <div class="stat"><div class="label">Exact total match</div><div class="value">${result.exact.toLocaleString()}</div></div>
-          <div class="stat"><div class="label">1 ms jitter</div><div class="value">${result.withinOne.toLocaleString()}</div></div>
+          <div class="stat"><div class="label">Unique identity pairs</div><div class="value">${result.pairCount.toLocaleString()}</div></div>
+          <div class="stat"><div class="label">Raw endpoints compared</div><div class="value">${result.compared.toLocaleString()}</div></div>
+          <div class="stat"><div class="label">Exact raw endpoint match</div><div class="value">${result.exact.toLocaleString()}</div></div>
+          <div class="stat"><div class="label">1 ms difference</div><div class="value">${result.withinOne.toLocaleString()}</div></div>
           <div class="stat"><div class="label">Over 1 ms delta</div><div class="value${result.beyondOne ? " amber" : ""}">${result.beyondOne.toLocaleString()}</div></div>
           <div class="stat"><div class="label">Max delta</div><div class="value">${result.maxDelta.toLocaleString()} ${UNIT}</div></div>
           ${result.unpaired ? `<div class="stat"><div class="label">Unpaired records</div><div class="value amber">${result.unpaired.toLocaleString()}</div></div>` : ""}
+          ${result.missingIdentity ? `<div class="stat"><div class="label">Missing TID/GTID</div><div class="value amber">${result.missingIdentity}</div></div>` : ""}
+          ${result.ambiguous ? `<div class="stat"><div class="label">Records with ambiguous identity</div><div class="value amber">${result.ambiguous}</div></div>` : ""}
+          ${result.excluded ? `<div class="stat"><div class="label">Pairs excluded: completion unverified</div><div class="value amber">${result.excluded}</div></div>` : ""}
         </div>
+        ${result.pairs.length ? `<details><summary>Inspect ${result.pairs.length} identity pair(s)</summary><table class="stage-table"><thead><tr><th>Standard source line</th><th>Enhanced source line</th><th>Raw position 12 (ms)</th><th>Raw TC (ms)</th><th>Difference (ms)</th></tr></thead><tbody>${result.pairs.map(p => `<tr><td>${p.standardLine}</td><td>${p.enhancedLine}</td><td>${p.standardRaw}</td><td>${p.enhancedTC == null ? "missing" : p.enhancedTC}</td><td>${p.comparable ? p.delta : "Excluded: completion unverified"}</td></tr>`).join("")}</tbody></table></details>` : ""}
       </div>`;
   }
 
@@ -1019,6 +1107,8 @@
 
   function renderExtBatchBody() {
     const txns = batchExt;
+    const partialCount = txns.filter(t => t.completionStatus === "partial").length;
+    const conflictingCount = txns.filter(t => t.completionStatus === "conflicting").length;
     const totals = txns.map(t => t.total).sort((a, b) => a - b);
     const sum = totals.reduce((a, b) => a + b, 0);
     const avg = sum / totals.length;
@@ -1033,7 +1123,7 @@
     Object.entries(bottleneckCounts).forEach(([k, c]) => { if (c > topCount) { topCount = c; topBottleneck = k; } });
     const topBottleneckPct = Math.round((topCount / txns.length) * 100);
     const [topPhase, topKey] = topBottleneck.split(":");
-    const topDesc = EXT_KEYWORDS[topKey] || null;
+    const topDesc = keywordDescription(topKey);
 
     // top contributors: avg duration per phase:key across all transactions
     const contribSums = {}, contribCounts = {};
@@ -1047,7 +1137,7 @@
     const maxContrib = contribList.length ? contribList[0].avg : 1;
     const contribHtml = contribList.map(c => {
       const [phase, key] = c.key.split(":");
-      const desc = EXT_KEYWORDS[key] || "unrecognized keyword";
+      const desc = keywordDescription(key) || "unrecognized keyword";
       const widthPct = (c.avg / maxContrib) * 100;
       return `
         <div class="contrib-row">
@@ -1063,13 +1153,14 @@
     return `
       <div class="stat-row">
         <div class="stat"><div class="label">Transactions</div><div class="value">${txns.length.toLocaleString()}</div></div>
-        <div class="stat"><div class="label">Avg total</div><div class="value">${avg.toFixed(0)} ${UNIT}</div></div>
+        <div class="stat"><div class="label">Avg observed elapsed</div><div class="value">${avg.toFixed(0)} ${UNIT}</div></div>
         <div class="stat"><div class="label">p50</div><div class="value">${median.toFixed(0)} ${UNIT}</div></div>
         <div class="stat"><div class="label">p95</div><div class="value">${p95.toFixed(0)} ${UNIT}</div></div>
         <div class="stat"><div class="label">p99</div><div class="value">${p99.toFixed(0)} ${UNIT}</div></div>
         <div class="stat"><div class="label">Max</div><div class="value">${max.toFixed(0)} ${UNIT}</div></div>
         <div class="stat"><div class="label">Most common single bottleneck</div><div class="value amber small">${escapeHtml(topPhase)}: ${escapeHtml(topKey)}${topDesc ? " - " + escapeHtml(topDesc) : ""}</div><div class="sub">${topCount} of ${txns.length} txns (${topBottleneckPct}%)</div></div>
       </div>
+      <div class="validation-panel${partialCount || conflictingCount ? " warn" : ""}">Enhanced summaries include all parsed records and use observed elapsed time. Complete: ${txns.length - partialCount - conflictingCount}; partial (missing TC): ${partialCount}; conflicting completion: ${conflictingCount}. Partial and conflicting records are excluded from raw endpoint comparisons. Expand any record to inspect completion and raw timestamps.</div>
       ${txns.some(t => t.normalizationCount || t.totalAdjusted || t.tcMismatch) ? `<div class="validation-panel warn">${txns.filter(t => t.normalizationCount || t.totalAdjusted || t.tcMismatch).length} enhanced transaction(s) contain out-of-order or conflicting completion timestamps. Their waterfalls use nondecreasing display times; expand a transaction to inspect raw values. Verify these records before relying on action durations or totals.</div>` : ""}
       <div class="section-title">Top contributors (avg duration per action, across all transactions)</div>
       <div class="contrib-list">${contribHtml}</div>
@@ -1113,7 +1204,7 @@
         <tr class="txn-row" data-n="${t.n}">
           <td class="num">${t.n}</td><td>${t.ts ? escapeHtml(t.ts) : "-"}</td>
           <td>${t.url ? `<span class="txn-url" title="${escapeHtml(t.url)}">${escapeHtml(t.url)}</span>` : "-"}</td>
-          <td class="num">${t.total.toLocaleString()} ${UNIT}</td>
+          <td class="num">${t.total.toLocaleString()} ${UNIT} <span class="hint">${escapeHtml(t.completionStatus)}</span></td>
           <td><span class="group-chip"><span class="swatch" style="background:${PHASE_COLORS[t.topEntry.phase]}"></span>${escapeHtml(t.topEntry.key)}</span></td>
         </tr>
         <tr class="detail-row ${isExpanded ? "" : "hidden"}" data-detail-for="${t.n}">
@@ -1126,7 +1217,7 @@
         <thead><tr>
           <th data-key="n">#${sortKeyExt === "n" ? " " + arrow(sortDirExt) : ""}</th>
           <th>Timestamp</th><th>Endpoint</th>
-          <th class="num" data-key="total">Total ${UNIT}${sortKeyExt === "total" ? " " + arrow(sortDirExt) : ""}</th>
+          <th class="num" data-key="total">Observed elapsed ${UNIT}${sortKeyExt === "total" ? " " + arrow(sortDirExt) : ""}</th>
           <th data-key="bottleneck">Biggest action${sortKeyExt === "bottleneck" ? " " + arrow(sortDirExt) : ""}</th>
         </tr></thead>
         <tbody>${rowsHtml}</tbody>
@@ -1175,12 +1266,14 @@
   }
 
   function exportCsv(txns, filename, rowFn) {
-    const header = ["#", "timestamp", "endpoint", `total_${UNIT}`, "bottleneck", `bottleneck_${UNIT}`];
+    const header = ["#", "timestamp", "endpoint", `observed_elapsed_${UNIT}`, "bottleneck", `bottleneck_${UNIT}`, "completion", `raw_endpoint_${UNIT}`, "source_line"];
     const lines = [header.join(",")];
     txns.forEach(t => {
       const esc = v => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
       const vals = rowFn(t);
-      lines.push([vals[0], esc(vals[1]), esc(vals[2]), vals[3], esc(vals[4]), vals[5]].join(","));
+      const completion = t.completionStatus || (t.totalAdjusted ? "conflicting" : "standard endpoint recorded");
+      const rawEndpoint = t.rawTC === undefined ? t.rawTotal : t.rawTC;
+      lines.push([vals[0], esc(vals[1]), esc(vals[2]), vals[3], esc(vals[4]), vals[5], esc(completion), rawEndpoint == null ? "" : rawEndpoint, t.line || ""].join(","));
     });
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
