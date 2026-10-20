@@ -4,6 +4,6 @@
   "private": true,
   "description": "Client-side IBM DataPower utility tests.",
   "scripts": {
-    "test": "node tests/dp-latency-trace.regression.test.js"
+    "test": "node tests/dp-latency-trace.regression.test.js && node tests/standard-timeline.test.js"
   }
 }
