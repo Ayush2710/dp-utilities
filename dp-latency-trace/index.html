@@ -280,13 +280,13 @@
   .section-title { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); margin: 30px 0 12px; }
 
   .histogram { display: flex; align-items: flex-end; gap: 4px; height: 120px; border-bottom: 1px solid var(--grid); padding-bottom: 2px; min-width: 640px; }
-  .hist-bar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
-  .hist-bar .bar { width: 100%; background: var(--c-reqproc); border-radius: 2px 2px 0 0; min-height: 2px; }
+  .hist-bar { flex: 1; height: 100%; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+  .hist-bar .bar { width: 100%; background: var(--c-reqproc); border-radius: 2px 2px 0 0; }
   .hist-labels { display: flex; gap: 4px; min-width: 640px; margin-top: 6px; }
   .hist-labels span { flex: 1; text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: var(--text-faint); }
 
   .timeline { display: flex; align-items: flex-end; gap: 2px; height: 80px; min-width: 640px; overflow-x: auto; border-bottom: 1px solid var(--grid); padding-bottom: 2px; }
-  .timeline-bar { flex: 0 0 auto; width: 4px; min-height: 2px; border-radius: 1px 1px 0 0; cursor: default; }
+  .timeline-bar { flex: 0 0 auto; width: 4px; border-radius: 1px 1px 0 0; cursor: default; }
   .timeline-bar:hover { filter: brightness(1.3); }
   .timeline-caption { font-size: 11.5px; color: var(--text-faint); margin-top: 6px; font-family: 'IBM Plex Mono', monospace; }
 
@@ -429,6 +429,23 @@
     BR:"Body read", BS:"Body sent", CS:"Connection started", HR:"Headers read", HS:"Header sent",
     PC:"Completed processing rule action", PS:"Started processing rule", TC:"Transaction complete",
     TS:"Transaction started",
+    // IBM DataPower API Gateway policies (not generic third-party gateways):
+    // https://www.ibm.com/docs/en/datapower-gateway/10.6.x?topic=gateway-latency-debug-data-policies
+    CI:"Client identification policy", COR:"CORS policy", CSEC:"Client security policy",
+    EXT:"Extract policy", FC:"Function call policy", FNL:"Final policy",
+    GE:"GraphQL execute policy", GI:"GraphQL introspect policy", GS:"GatewayScript policy",
+    HTM:"HTML policy", IV:"Invoke policy", JTG:"JWT generate policy", JTV:"JWT validate policy",
+    J2X:"JSON to XML policy", LOG:"Log policy", MAP:"Map policy", OA:"OAuth policy",
+    OSW:"Operation switch policy", PAR:"Parse policy", RAL:"Rate limit policy",
+    RED:"Redact policy", RES:"Result policy", RL:"API rate limit action (deprecated)",
+    RLI:"Rate limit details policy", RT:"Routing policy", SE:"Security policy",
+    SV:"Set variable policy", SW:"Switch policy", TR:"Throw policy", US:"User security policy",
+    VAL:"Validate policy", WS:"WebSocket upgrade policy", WSDL:"WSDL policy",
+    XC:"Started execute policy", XS:"Completed execute policy", XSL:"XSLT policy",
+    X2J:"XML to JSON policy",
+    // IBM message 0x80e007ad also documents these transport events:
+    // https://www.ibm.com/docs/en/datapower-gateway/11.0.0?topic=messages-log-0x80exxxxx
+    CA:"Connection accepted", DNS:"DNS resolved", CR:"Connection reuse", CC:"Connection completes",
   };
   const PHASE_COLORS = { Request: "var(--c-reqproc)", Response: "var(--c-rspproc)" };
 
@@ -1032,7 +1049,7 @@
       ${histHtml}
       <div class="section-title">Timeline across file${timelineHtml.note}</div>
       ${timelineHtml.html}
-      <div class="timeline-caption">Bar height = total latency · colour = bottleneck stage for that transaction</div>
+      <div class="timeline-caption">Bar height = observed elapsed time; each grouped bar preserves its highest latency. Colour identifies that peak transaction's bottleneck stage. Hover for the record range and peak transaction.</div>
       <div class="section-title">Transactions</div>
       <div class="table-toolbar">
         <input type="search" id="std-search" placeholder="Filter by # or URL…">
@@ -1126,11 +1143,11 @@
     const topDesc = keywordDescription(topKey);
 
     // top contributors: avg duration per phase:key across all transactions
-    const contribSums = {}, contribCounts = {};
+    const contribSums = {};
     txns.forEach(t => {
       const perTxn = {};
       t.rows.forEach(r => { const k = `${r.phase}:${r.key}`; perTxn[k] = (perTxn[k] || 0) + r.duration; });
-      Object.entries(perTxn).forEach(([k, v]) => { contribSums[k] = (contribSums[k] || 0) + v; contribCounts[k] = (contribCounts[k] || 0) + 1; });
+      Object.entries(perTxn).forEach(([k, v]) => { contribSums[k] = (contribSums[k] || 0) + v; });
     });
     const contribList = Object.keys(contribSums).map(k => ({ key: k, avg: contribSums[k] / txns.length }))
       .sort((a, b) => b.avg - a.avg).slice(0, 15);
@@ -1162,13 +1179,14 @@
       </div>
       <div class="validation-panel${partialCount || conflictingCount ? " warn" : ""}">Enhanced summaries include all parsed records and use observed elapsed time. Complete: ${txns.length - partialCount - conflictingCount}; partial (missing TC): ${partialCount}; conflicting completion: ${conflictingCount}. Partial and conflicting records are excluded from raw endpoint comparisons. Expand any record to inspect completion and raw timestamps.</div>
       ${txns.some(t => t.normalizationCount || t.totalAdjusted || t.tcMismatch) ? `<div class="validation-panel warn">${txns.filter(t => t.normalizationCount || t.totalAdjusted || t.tcMismatch).length} enhanced transaction(s) contain out-of-order or conflicting completion timestamps. Their waterfalls use nondecreasing display times; expand a transaction to inspect raw values. Verify these records before relying on action durations or totals.</div>` : ""}
-      <div class="section-title">Top contributors (avg duration per action, across all transactions)</div>
+      <div class="section-title">Average contribution per transaction</div>
+      <div class="hint">Repeated occurrences of each keyword are combined within each phase. The average includes all parsed transactions; an absent keyword contributes zero.</div>
       <div class="contrib-list">${contribHtml}</div>
       <div class="section-title">Latency distribution</div>
       ${histHtml}
       <div class="section-title">Timeline across file${timelineHtml.note}</div>
       ${timelineHtml.html}
-      <div class="timeline-caption">Bar height = total latency - colour = phase of that transaction's single biggest action</div>
+      <div class="timeline-caption">Bar height = observed elapsed time; each grouped bar preserves its highest latency. Colour identifies the phase of that peak transaction's largest recorded interval. Hover for the record range and peak transaction.</div>
       <div class="section-title">Transactions</div>
       <div class="table-toolbar">
         <input type="search" id="ext-search" placeholder="Filter by # or URL…">
@@ -1255,14 +1273,18 @@
   function buildTimeline(txns, colorFn, titleFn) {
     const maxBars = 1200;
     const step = Math.max(1, Math.ceil(txns.length / maxBars));
-    const maxTotal = Math.max(...txns.map(t => t.total), 1);
+    const maxTotal = txns.reduce((max, t) => Math.max(max, t.total), 1);
     const bars = [];
     for (let i = 0; i < txns.length; i += step) {
-      const t = txns[i];
-      const h = Math.max((t.total / maxTotal) * 100, 2);
-      bars.push(`<div class="timeline-bar" style="height:${h}%;background:${colorFn(t)}" title="${escapeHtml(titleFn(t))}"></div>`);
+      const end = Math.min(i + step, txns.length);
+      let peak = i;
+      for (let j = i + 1; j < end; j++) if (txns[j].total > txns[peak].total) peak = j;
+      const t = txns[peak];
+      const h = (t.total / maxTotal) * 100;
+      const title = `Record range ${i + 1}-${end}; peak transaction: ${titleFn(t)}`;
+      bars.push(`<div class="timeline-bar" data-start="${i + 1}" data-end="${end}" data-peak="${peak + 1}" style="height:${h}%;background:${colorFn(t)}" title="${escapeHtml(title)}"></div>`);
     }
-    return { html: `<div class="timeline">${bars.join("")}</div>`, note: step > 1 ? ` (downsampled, showing 1 of every ${step})` : " (file order)" };
+    return { html: `<div class="timeline">${bars.join("")}</div>`, note: step > 1 ? ` (maximum per group of up to ${step} records, file order)` : " (one bar per record, file order)" };
   }
 
   function exportCsv(txns, filename, rowFn) {
@@ -1290,6 +1312,8 @@
     computeExtTxn,
     compareCrossFormat,
     parseLogRecords,
+    buildHistogram,
+    buildTimeline,
   };
 })();
 </script>

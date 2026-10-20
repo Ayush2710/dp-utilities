@@ -58,8 +58,9 @@ assert.deepEqual(Array.from(txn(edgeCases.at(-1)).rows.filter(r=>r.key==='AXF'),
 const policy=txn('TS=0,J2X=5,X2J=9,rPC=9,TC=10');
 assert.deepEqual(Array.from(policy.rows,r=>r.key),['TS','J2X','X2J','rPC','TC'],'documented alphanumeric policy keys must not be dropped');
 assert.deepEqual(Array.from(policy.rows,r=>r.duration),[0,5,4,0,1]);
-assert.equal(policy.rows[1].label,null,'unlisted descriptions remain raw rather than guessed');
-assert.equal(policy.rows[2].label,null);
+assert.equal(policy.rows[1].label,'JSON to XML policy');
+assert.equal(policy.rows[2].label,'XML to JSON policy');
+assert.equal(policy.rows[3].label,null,'keys without a documented definition remain unrecognized');
 validate(policy);
 
 // Metamorphic tests: inserting backward-valued unknown events into a known
