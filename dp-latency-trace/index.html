@@ -497,9 +497,13 @@
     let prev = 0;
     const rows = STD_FIELDS.map(f => {
       const cumVal = durationsRaw[f.position - 1];
-      const dur = Math.max(cumVal - prev, 0);
-      const row = { label: f.label, group: f.group, duration: dur, start: prev, end: cumVal };
-      prev = cumVal;
+      // IBM's logical order is not necessarily chronological (e.g. streaming).
+      // Match dpShowLatency's nondecreasing display timeline: a regressing raw
+      // timestamp must never reset the cursor and count elapsed time twice.
+      const end = Math.max(prev, cumVal);
+      const row = { position: f.position, label: f.label, group: f.group,
+        duration: end - prev, start: prev, end, rawEnd: cumVal, adjusted: end !== cumVal };
+      prev = end;
       return row;
     });
     const total = prev;
@@ -507,7 +511,10 @@
     rows.forEach(r => { groupTotals[r.group] = (groupTotals[r.group] || 0) + r.duration; });
     let bottleneckGroup = null, bottleneckDur = -1;
     GROUP_ORDER.forEach(g => { const d = groupTotals[g] || 0; if (d > bottleneckDur) { bottleneckDur = d; bottleneckGroup = g; } });
-    return { rows, total, groupTotals, bottleneckGroup, bottleneckDur };
+    const rawTotal = durationsRaw[11];
+    const normalizationCount = rows.filter(r => r.adjusted).length;
+    return { rows, total, rawTotal, normalizationCount,
+      totalAdjusted: total !== rawTotal, groupTotals, bottleneckGroup, bottleneckDur };
   }
 
   function toSegments(rows) {
@@ -527,9 +534,9 @@
     const btn = segments.find(s => s.group === bottleneckGroup);
     const bottleneckPct = (total > 0 && btn) ? Math.round((btn.duration / total) * 100) : 0;
 
-    const segmentHtml = segments.map(seg => {
+    const segmentHtml = segments.filter(seg => seg.duration > 0).map(seg => {
       const leftPct = total > 0 ? (seg.start / total) * 100 : 0;
-      const widthPct = total > 0 ? Math.max((seg.duration / total) * 100, 0.3) : 0;
+      const widthPct = total > 0 ? (seg.duration / total) * 100 : 0;
       const isBottleneck = seg.group === bottleneckGroup;
       const pct = total > 0 ? ((seg.duration/total)*100).toFixed(1) : 0;
       const callout = (isBottleneck && !compact) ? `<div class="bottleneck-callout">▲ ${bottleneckPct}%</div>` : "";
@@ -551,6 +558,8 @@
   }
 
   function stageTableHTML(rows, total, bottleneckGroup) {
+    const adjusted = rows.filter(r => r.adjusted);
+    const terminalConflict = rows[rows.length - 1].rawEnd !== total;
     const tableRows = rows.map((r, i) => {
       const isGroupStart = i === 0 || rows[i - 1].group !== r.group;
       const isBottleneck = r.group === bottleneckGroup;
@@ -559,14 +568,15 @@
         <tr class="${isGroupStart ? "group-start" : ""} ${isBottleneck ? "is-bottleneck" : ""}">
           <td>${isGroupStart ? `<span class="group-chip"><span class="swatch" style="background:${GROUP_COLORS[r.group]}"></span>${escapeHtml(r.group)}</span>` : ""}</td>
           <td>${escapeHtml(r.label)}</td>
-          <td class="num">${r.end}</td>
+          <td class="num">${r.end}${r.adjusted ? ` <span class="hint">(raw ${r.rawEnd})</span>` : ""}</td>
           <td class="num">${r.duration}</td>
           <td class="num">${pct}%</td>
         </tr>`;
     }).join("");
     return `
+      ${adjusted.length ? `<div class="validation-panel warn"><strong>${adjusted.length} out-of-order timestamp(s).</strong> The waterfall keeps elapsed time from moving backward, matching dpShowLatency. Adjusted times retain their raw values below. These intervals are a display allocation; streaming or missing events can prevent exact stage attribution.${terminalConflict ? ` <strong>The final raw timestamp (${rows[rows.length - 1].rawEnd} ms) is below an earlier event. The displayed total (${total} ms) is the observed maximum; verify this record before relying on its total.</strong>` : ""}</div>` : ""}
       <table class="stage-table">
-        <thead><tr><th>Group</th><th>Stage</th><th class="num">Time (${UNIT})</th><th class="num">Duration (${UNIT})</th><th class="num">% of total</th></tr></thead>
+        <thead><tr><th>Group</th><th>Stage</th><th class="num">Display time (${UNIT})</th><th class="num">Duration (${UNIT})</th><th class="num">% of total</th></tr></thead>
         <tbody>${tableRows}</tbody>
       </table>`;
   }
@@ -912,6 +922,7 @@
         <div class="stat"><div class="label">Max</div><div class="value">${max.toFixed(0)} ${UNIT}</div></div>
         <div class="stat"><div class="label">Most common bottleneck</div><div class="value amber small">${escapeHtml(topBottleneck)}</div><div class="sub">${topCount} of ${txns.length} txns (${topBottleneckPct}%)</div></div>
       </div>
+      ${txns.some(t => t.normalizationCount) ? `<div class="validation-panel warn">${txns.filter(t => t.normalizationCount).length} transaction(s) contain out-of-order timestamps. Their waterfalls use nondecreasing display times; expand a transaction to inspect raw values.${txns.some(t => t.totalAdjusted) ? ` ${txns.filter(t => t.totalAdjusted).length} total(s) use an earlier maximum because the final raw timestamp is lower; verify those records.` : ""}</div>` : ""}
       ${waterfallHTML(aggRows, aggTotal, aggBottleneck, { title: "Average transaction (representative waterfall)" })}
       <div class="section-title">Latency distribution</div>
       ${histHtml}
