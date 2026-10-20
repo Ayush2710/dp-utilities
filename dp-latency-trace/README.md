@@ -30,6 +30,16 @@ The mapping and streaming caveat are documented in [IBM Latency messages](https:
 
 For an out-of-order enhanced timestamp, the display cursor stays at its previous maximum and the raw value remains visible. The cursor continues across `==`; phases are not independent clocks. If the final timestamp or a recorded `TC` conflicts with the observed maximum, the UI warns that transaction completion needs verification. Adjusted intervals are display allocations rather than proof of exact action durations.
 
+## Input integrity and raw endpoint comparison
+
+- Standard payloads require exactly 16 nonnegative, finite numeric tokens before optional bracketed endpoint metadata. Enhanced payloads reject malformed tokens, empty phases/tokens and multiple `==` separators. A trailing comma is accepted; unknown syntactically valid keys are retained.
+- Single-record mode accepts whitespace-wrapped records. Batch mode treats each marked line as one record, reports rejected records by source line, and flags unassigned continuation lines. It does not guess how to join truncated records.
+- Enhanced completion is complete only with one terminal `TC` consistent with the observed maximum. Missing `TC` is partial; duplicate, nonterminal or contradictory `TC` is conflicting. Missing `TS` or a missing phase separator is permitted.
+- Batch enhanced summaries explicitly include all parsed observations, including partial/conflicting ones. The table shows completion status. CSV exports use `observed_elapsed_ms` and include completion status, raw endpoint and source line.
+- Raw endpoint comparison pairs unique TID + GTID values with available service/device/domain scope. Records without both IDs, ambiguous scope or duplicate identities are not paired; file order never establishes a verified match. Separate mixed-appliance/domain logs when scope metadata is absent.
+- Comparable pairs use raw standard position 12 and raw enhanced `TC`. Conflicting standard endpoints and incomplete/conflicting enhanced records are excluded. These endpoints represent different events, so 1 ms is reported as a difference, not a universal IBM tolerance.
+- Timestamp extraction reads supported formats from the prefix only (DataPower weekday/month/day/year/time or ISO timestamp); absent/unsupported timestamps remain empty. Probe JSON wrappers need conversion to textual records.
+
 ## Regression Test
 
 The repo test suite uses synthetic `Latency:` and `ExtLatency:` records so no production-style logs need to be published. It checks:
@@ -44,6 +54,7 @@ The repo test suite uses synthetic `Latency:` and `ExtLatency:` records so no pr
 - All 16 displayed timestamps and durations for 100 cases captured from the live original website, including interior and terminal regressions.
 - Timeline continuity, stage/group sums, raw-value preservation, and normalization warnings.
 - Enhanced regressions across phases, repeated/unknown keywords, conflicting TC, zero/fractional values, and 100 insertion-invariance cases.
+- Strict malformed-input diagnostics, completion state, scope and duplicate-identity handling, raw endpoint exclusions, and 100 reordered identity comparison sets.
 
 Run:
 
