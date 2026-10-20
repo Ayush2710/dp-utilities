@@ -40,11 +40,12 @@ const edgeCases=[
   'TS=0,BR=5', // partial record: preserve existing support; no invented TC
   'TS=0,HR=0,BS=0,TC=0',
   'TS=2,HR=2,PC=4,TC=7',
-  'TS=0,APRB=-2,PC=4,TC=4',
   'TS=0,PS=0.1,AXF=0.05,PC=0.3,TC=0.3',
   'HR=0,AXF=1,AXF=2, == HR=3,AXF=4,TC=5',
 ];
 edgeCases.forEach(line=>validate(txn(line)));
+assert.equal(api.parseExtLine('ExtLatency: TS=0,APRB=-2,PC=4,TC=4'),null,'negative elapsed input rejected');
+validate(api.computeExtTxn([{key:'TS',value:0,phase:'Request'},{key:'APRB',value:-2,phase:'Request'},{key:'TC',value:4,phase:'Request'}]));
 const conflict=txn('TS=0,BR=462,TC=450');
 assert.equal(conflict.total,462);
 assert.equal(conflict.rawTotal,450);
