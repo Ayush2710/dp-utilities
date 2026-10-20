@@ -11,7 +11,7 @@ Open `index.html` in this folder, paste a single record or load a `.log`/`.txt` 
 - Treats all timestamp values as cumulative milliseconds from transaction start.
 - Standard timelines use `displayEnd = max(previousDisplayEnd, rawTimestamp)`, then subtract the previous display end. This matches dpShowLatency and prevents duplicate elapsed time after a backward timestamp.
 - Standard rows retain raw timestamps and flag adjusted display times; a conflicting final timestamp is explicitly flagged for review.
-- Extended action duration calculations are unchanged.
+- Extended timelines also keep elapsed time from moving backward. They preserve recorded key order, repeated keys, request/response phases and raw values, and flag conflicting completion timestamps.
 - Keeps unknown enhanced-latency keywords visible by raw key instead of guessing.
 - Supports mixed logs containing both `Latency:` and `ExtLatency:` records.
 - Shows batch summaries, percentiles, waterfall views, histogram, timeline, expandable transaction rows, CSV export, and cross-format validation.
@@ -28,6 +28,8 @@ The mapping and streaming caveat are documented in [IBM Latency messages](https:
 
 `ExtLatency:` is not parsed as a variant of the 16-field format. It is parsed as comma-separated `KEY=VALUE` pairs split by `==`, with request and response phases kept separate.
 
+For an out-of-order enhanced timestamp, the display cursor stays at its previous maximum and the raw value remains visible. The cursor continues across `==`; phases are not independent clocks. If the final timestamp or a recorded `TC` conflicts with the observed maximum, the UI warns that transaction completion needs verification. Adjusted intervals are display allocations rather than proof of exact action durations.
+
 ## Regression Test
 
 The repo test suite uses synthetic `Latency:` and `ExtLatency:` records so no production-style logs need to be published. It checks:
@@ -41,6 +43,7 @@ The repo test suite uses synthetic `Latency:` and `ExtLatency:` records so no pr
 - No external font service calls.
 - All 16 displayed timestamps and durations for 100 cases captured from the live original website, including interior and terminal regressions.
 - Timeline continuity, stage/group sums, raw-value preservation, and normalization warnings.
+- Enhanced regressions across phases, repeated/unknown keywords, conflicting TC, zero/fractional values, and 100 insertion-invariance cases.
 
 Run:
 
